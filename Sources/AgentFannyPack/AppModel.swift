@@ -1,0 +1,185 @@
+import AppKit
+import Foundation
+import AgentFannyPackCore
+
+@MainActor
+final class AppModel: ObservableObject {
+    @Published private(set) var state: PersistedState
+    @Published var pendingSwitch: AccountProfile?
+    @Published var isRefreshing = false
+    @Published var notice: String?
+
+    let isPreview: Bool
+    private let store: MetadataStore
+
+    init(preview: Bool = false, store: MetadataStore = MetadataStore()) {
+        self.isPreview = preview
+        self.store = store
+        if preview {
+            self.state = PreviewData.state(now: Date())
+        } else {
+            var loaded = (try? store.load()) ?? PersistedState()
+            Self.mergeDefaultProfiles(into: &loaded)
+            self.state = loaded
+            try? store.save(loaded)
+        }
+    }
+
+    var groupedProfiles: [(ProviderSurface, [AccountProfile])] {
+        ProviderSurface.allCases.map { surface in
+            (surface, state.profiles.filter { $0.surface == surface })
+        }
+    }
+
+    func isActive(_ profile: AccountProfile) -> Bool {
+        state.activeProfileID(for: profile.surface) == profile.id
+    }
+
+    func snapshot(for profile: AccountProfile) -> QuotaSnapshot? {
+        state.latestSnapshot(for: profile.id)
+    }
+
+    func requestSwitch(_ profile: AccountProfile) {
+        pendingSwitch = profile
+    }
+
+    func confirmSwitch() {
+        guard let profile = pendingSwitch else { return }
+        defer { pendingSwitch = nil }
+        switch profile.switchCapability {
+        case .isolatedProfile:
+            do {
+                try state.setActive(profileID: profile.id)
+                if !isPreview { try store.save(state) }
+                notice = "Launcher packed for \(profile.label). Running sessions were not touched."
+            } catch {
+                notice = error.localizedDescription
+            }
+        case .guidedOnly:
+            let configuration = NSWorkspace.OpenConfiguration()
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
+                NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+            }
+            notice = "Open Codex, sign out and back in, then refresh here. Agent Fanny Pack will not claim a switch without app-owned readback."
+        case .unsupported:
+            notice = "That zipper is closed: this provider has no supported safe switch contract yet."
+        }
+    }
+
+    func refresh() {
+        guard !isRefreshing else { return }
+        if isPreview {
+            notice = "Synthetic preview refreshed — no accounts or networks touched."
+            return
+        }
+
+        isRefreshing = true
+        let profiles = state.profiles
+        let previous = state.snapshots
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var refreshes: [(String, Result<ProviderRefresh, Error>)] = []
+            for profile in profiles {
+                let old = previous
+                    .filter { $0.profileID == profile.id }
+                    .max(by: { $0.fetchedAt < $1.fetchedAt })
+                let adapter: ProviderRefreshing
+                switch profile.surface {
+                case .codexCLI: adapter = CodexCLIAdapter()
+                case .codexMacApp: adapter = GuidedCodexMacAdapter()
+                case .claudeCode: adapter = ClaudeCodeAdapter()
+                case .cursor: adapter = CursorDeferredAdapter()
+                }
+                refreshes.append((profile.id, Result { try adapter.refresh(profile: profile, previousSnapshot: old) }))
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (profileID, result) in refreshes {
+                    guard let index = self.state.profiles.firstIndex(where: { $0.id == profileID }) else { continue }
+                    switch result {
+                    case .success(let refresh):
+                        self.state.profiles[index].identity = refresh.identity
+                        self.state.profiles[index].connected = refresh.connected
+                        self.state.profiles[index].lastError = refresh.detail
+                        if let snapshot = refresh.snapshot,
+                           self.state.latestSnapshot(for: profileID)?.id != snapshot.id {
+                            self.state.snapshots.append(snapshot)
+                        }
+                    case .failure(let error):
+                        self.state.profiles[index].lastError = Redactor.text(error.localizedDescription)
+                    }
+                }
+                self.state = MetadataStore.bounded(self.state)
+                try? self.store.save(self.state)
+                self.isRefreshing = false
+            }
+        }
+    }
+
+    private static func mergeDefaultProfiles(into state: inout PersistedState) {
+        for profile in ProfileDiscovery().defaults() where !state.profiles.contains(where: { $0.id == profile.id }) {
+            state.profiles.append(profile)
+        }
+        if !state.profiles.contains(where: { $0.surface == .codexMacApp }) {
+            state.profiles.append(AccountProfile(
+                id: "codex-macos-guided",
+                surface: .codexMacApp,
+                label: "Current app session",
+                switchCapability: .guidedOnly
+            ))
+        }
+        if !state.profiles.contains(where: { $0.surface == .cursor }) {
+            state.profiles.append(AccountProfile(
+                id: "cursor-deferred",
+                surface: .cursor,
+                label: "Cursor integration",
+                switchCapability: .unsupported,
+                lastError: "Deferred until Cursor exposes a supported personal quota and isolated-profile contract."
+            ))
+        }
+        for surface in ProviderSurface.allCases {
+            let candidates = state.profiles.filter { $0.surface == surface && $0.switchCapability != .unsupported }
+            if state.activeProfileID(for: surface) == nil, let first = candidates.first {
+                state.activeProfileBySurface[surface.rawValue] = first.id
+            }
+        }
+    }
+}
+
+enum PreviewData {
+    static func state(now: Date) -> PersistedState {
+        let profiles = [
+            AccountProfile(id: "codex-weekend", surface: .codexCLI, label: "Weekend Build", identity: "dev@sample.test", configurationHome: "/tmp/demo-codex-a", switchCapability: .isolatedProfile, connected: true),
+            AccountProfile(id: "codex-studio", surface: .codexCLI, label: "Studio Bench", identity: "studio@sample.test", configurationHome: "/tmp/demo-codex-b", switchCapability: .isolatedProfile, connected: true),
+            AccountProfile(id: "codex-app", surface: .codexMacApp, label: "Desktop Session", identity: "maker@sample.test", switchCapability: .guidedOnly, connected: true, lastError: "App-owned session · guided sign-out/sign-in only."),
+            AccountProfile(id: "claude-side", surface: .claudeCode, label: "Side Project", identity: "builder@sample.test", configurationHome: "/tmp/demo-claude-a", switchCapability: .isolatedProfile, connected: true),
+            AccountProfile(id: "claude-lab", surface: .claudeCode, label: "Research Lab", identity: "lab@sample.test", configurationHome: "/tmp/demo-claude-b", switchCapability: .isolatedProfile, connected: true),
+            AccountProfile(id: "cursor-deferred", surface: .cursor, label: "Cursor integration", switchCapability: .unsupported, lastError: "Deferred — safe personal quota and profile switching are not documented."),
+        ]
+        let values: [(String, QuotaSource, Double, Double?)] = [
+            ("codex-weekend", .codexAppServer, 26, 42),
+            ("codex-studio", .codexAppServer, 72, 81),
+            ("claude-side", .claudeStatusLine, 53, 68),
+            ("claude-lab", .claudeStatusLine, 18, 31),
+        ]
+        let snapshots = values.map { profileID, source, primary, secondary in
+            QuotaSnapshot(
+                profileID: profileID,
+                windows: [
+                    QuotaWindow(id: "\(profileID)-primary", label: source == .claudeStatusLine ? "5h" : "Session", usedPercent: primary, resetsAt: now.addingTimeInterval(2 * 3600 + 26 * 60)),
+                    QuotaWindow(id: "\(profileID)-secondary", label: source == .claudeStatusLine ? "7d" : "Weekly", usedPercent: secondary ?? 0, resetsAt: now.addingTimeInterval(3 * 86_400 + 7 * 3600)),
+                ],
+                fetchedAt: now.addingTimeInterval(-94),
+                source: .syntheticPreview
+            )
+        }
+        return PersistedState(
+            profiles: profiles,
+            activeProfileBySurface: [
+                ProviderSurface.codexCLI.rawValue: "codex-weekend",
+                ProviderSurface.codexMacApp.rawValue: "codex-app",
+                ProviderSurface.claudeCode.rawValue: "claude-side"
+            ],
+            snapshots: snapshots
+        )
+    }
+}
