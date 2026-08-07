@@ -159,7 +159,7 @@ cd agent-fanny-pack
 swift build --product AgentFannyPack
 swift run AgentFannyPackTests
 ./scripts/public_safety_scan.sh
-./scripts/package_app.sh 0.1.1 dist
+./scripts/package_app.sh 0.1.2 dist
 ```
 
 The dependency-free test harness covers quota decoding, reset formatting, profile discovery, per-surface active state, guarded command construction, redaction, persistence bounds, error handling, and a real fake-executable/isolated-home process test. It exists because the minimal macOS Command Line Tools distribution does not always ship a test framework module.

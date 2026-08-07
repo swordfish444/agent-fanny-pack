@@ -412,6 +412,7 @@ private struct CompactQuotaRow: View {
 private struct AnimatedActiveBadge: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
+    private let pulseTimer = Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 5) {
@@ -434,11 +435,18 @@ private struct AnimatedActiveBadge: View {
         .background(PouchPalette.success.opacity(0.13), in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Active account")
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: false)) {
-                pulsing = true
-            }
+        .onAppear(perform: triggerPulse)
+        .onReceive(pulseTimer) { _ in triggerPulse() }
+        .onChange(of: reduceMotion) { reduced in
+            if reduced { pulsing = false }
+        }
+    }
+
+    private func triggerPulse() {
+        guard !reduceMotion, !pulsing else { return }
+        withAnimation(.easeOut(duration: 0.65)) { pulsing = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            pulsing = false
         }
     }
 }

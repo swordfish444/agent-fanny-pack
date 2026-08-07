@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${1:-0.1.1}"
+VERSION="${1:-0.1.2}"
 OUTPUT_DIR="${2:-dist}"
 PROJECT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 STAGE_DIR="$PROJECT_DIR/.build/package-stage"

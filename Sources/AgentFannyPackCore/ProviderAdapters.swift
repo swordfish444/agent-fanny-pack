@@ -36,7 +36,7 @@ public struct CodexCLIAdapter: ProviderRefreshing {
             throw FannyPackError.missingConfigurationHome(profile.id)
         }
         let messages = [
-            #"{"method":"initialize","id":0,"params":{"clientInfo":{"name":"agent_fanny_pack","title":"Agent Fanny Pack","version":"0.1.1"}}}"#,
+            #"{"method":"initialize","id":0,"params":{"clientInfo":{"name":"agent_fanny_pack","title":"Agent Fanny Pack","version":"0.1.2"}}}"#,
             #"{"method":"initialized","params":{}}"#,
             #"{"method":"account/read","id":1,"params":{"refreshToken":false}}"#,
             #"{"method":"account/rateLimits/read","id":2}"#
