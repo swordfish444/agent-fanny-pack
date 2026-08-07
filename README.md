@@ -17,10 +17,10 @@ No transcript warehouse. No mystery token math. Just the pouch.
 ## Install
 
 ```sh
-brew install --cask swordfish444/tap/agent-fanny-pack
+brew install --formula swordfish444/tap/agent-fanny-pack
 ```
 
-Agent Fanny Pack is currently ad-hoc signed, not Developer ID signed or notarized. Installation is still one command, but macOS may block the first launch. If it does, open **System Settings → Privacy & Security**, verify that the blocked app is Agent Fanny Pack, and choose **Open Anyway**. This is a transparent Gatekeeper limitation; the cask and app never remove quarantine metadata. See [Release and provenance](#release-and-provenance).
+Then launch it with `agent-fanny-pack-ui`. Homebrew compiles the tagged public source inside its build sandbox and installs the resulting menu-bar app plus command-line helper. No downloaded app binary enters quarantine, and no Gatekeeper bypass is used. The prebuilt cask is disabled until a release can be Developer ID signed and notarized.
 
 Requires macOS 13 or later. The release app is universal for Apple Silicon and Intel Macs.
 
@@ -123,7 +123,7 @@ Normal operation is event-light: one `NSStatusItem`, a SwiftUI popover created o
 
 **Switch did not change an existing shell.** That is intentional. The switch selects the profile for future `agent-fanny-pack run …` launches; existing processes keep their original environment.
 
-**Gatekeeper blocks the first launch.** The release is ad-hoc signed and checksum-pinned but not notarized. Open **System Settings → Privacy & Security**, verify the app name, and choose **Open Anyway**. Do not remove quarantine metadata or download a similarly named binary from an unverified source.
+**The source build fails.** Install the current Apple Command Line Tools from System Settings → General → Software Update, then retry the Homebrew command. The formula never downloads an executable app.
 
 **Cursor says “Roadmap.”** Cursor is not connected. Agent Fanny Pack will not infer personal quota from local usage or pretend a documented logout/login command is a safe multi-profile contract.
 
@@ -159,7 +159,7 @@ cd agent-fanny-pack
 swift build --product AgentFannyPack
 swift run AgentFannyPackTests
 ./scripts/public_safety_scan.sh
-./scripts/package_app.sh 0.1.0 dist
+./scripts/package_app.sh 0.1.1 dist
 ```
 
 The dependency-free test harness covers quota decoding, reset formatting, profile discovery, per-surface active state, guarded command construction, redaction, persistence bounds, error handling, and a real fake-executable/isolated-home process test. It exists because the minimal macOS Command Line Tools distribution does not always ship a test framework module.
@@ -178,11 +178,11 @@ swift run AgentFannyPack --ui-smoke-test
 
 ## Release and provenance
 
-Release archives are built from source by [`scripts/package_app.sh`](scripts/package_app.sh), contain a universal macOS app, and ship beside a SHA-256 file. CI repeats the public-safety scan, deterministic suite, universal packaging, signature verification, and checksum verification on the public head.
+Public releases ship a deterministic tagged source archive beside a SHA-256 file. The Homebrew formula compiles that exact archive locally. [`scripts/package_source.sh`](scripts/package_source.sh) creates the source release; [`scripts/package_app.sh`](scripts/package_app.sh) still creates a universal test artifact for CI verification, but unsigned app archives are not distributed to users.
 
 The icon and interface are original. The icon is generated from [`tools/IconMaker.swift`](tools/IconMaker.swift); UI glyphs are Apple SF Symbols; there are no downloaded visual assets. See [PROVENANCE.md](docs/PROVENANCE.md).
 
-Developer ID signing and notarization are intentionally not faked. The narrow maintainer action is to provide Apple-issued credentials to a protected release workflow, sign the exact built revision, submit it to Apple's notary service, staple the result, and remove the manual first-launch note only after a clean Gatekeeper test.
+Developer ID signing and notarization are intentionally not faked. The prebuilt cask stays disabled until Apple-issued credentials can sign the exact built revision, submit it to Apple's notary service, staple the result, and pass a clean Gatekeeper test. The supported source-build formula requires none of those credentials and weakens no macOS security control.
 
 ## Roadmap
 

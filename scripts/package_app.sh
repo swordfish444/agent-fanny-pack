@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.1.1}"
 OUTPUT_DIR="${2:-dist}"
 PROJECT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 STAGE_DIR="$PROJECT_DIR/.build/package-stage"
@@ -21,8 +21,8 @@ test -n "$PROJECT_DIR"
 test -d "$PROJECT_DIR"
 
 cd "$PROJECT_DIR"
-swift build -c release --product AgentFannyPack --triple arm64-apple-macosx13.0 --scratch-path "$ARM_SCRATCH"
-swift build -c release --product AgentFannyPack --triple x86_64-apple-macosx13.0 --scratch-path "$INTEL_SCRATCH"
+swift build --disable-sandbox -c release --product AgentFannyPack --triple arm64-apple-macosx13.0 --scratch-path "$ARM_SCRATCH"
+swift build --disable-sandbox -c release --product AgentFannyPack --triple x86_64-apple-macosx13.0 --scratch-path "$INTEL_SCRATCH"
 
 ARM_BIN="$ARM_SCRATCH/arm64-apple-macosx/release/AgentFannyPack"
 INTEL_BIN="$INTEL_SCRATCH/x86_64-apple-macosx/release/AgentFannyPack"

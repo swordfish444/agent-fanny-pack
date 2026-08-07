@@ -21,16 +21,16 @@ jobs:
       - name: Run deterministic provider and privacy tests
         run: swift run -c release AgentFannyPackTests
       - name: Package universal app
-        run: ./scripts/package_app.sh 0.1.0 dist
+        run: ./scripts/package_app.sh 0.1.1 dist
       - name: Verify bundle and archive
         run: |
           codesign --verify --deep --strict ".build/package-stage/Agent Fanny Pack.app"
-          (cd dist && shasum -a 256 -c Agent-Fanny-Pack-0.1.0.zip.sha256)
+          (cd dist && shasum -a 256 -c Agent-Fanny-Pack-0.1.1.zip.sha256)
           file ".build/package-stage/Agent Fanny Pack.app/Contents/MacOS/AgentFannyPack" | grep 'universal binary'
       - uses: actions/upload-artifact@v7
         with:
-          name: Agent-Fanny-Pack-0.1.0
+          name: Agent-Fanny-Pack-0.1.1
           path: |
-            dist/Agent-Fanny-Pack-0.1.0.zip
-            dist/Agent-Fanny-Pack-0.1.0.zip.sha256
+            dist/Agent-Fanny-Pack-0.1.1.zip
+            dist/Agent-Fanny-Pack-0.1.1.zip.sha256
           if-no-files-found: error

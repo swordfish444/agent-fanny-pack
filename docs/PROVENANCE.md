@@ -6,6 +6,6 @@ The app icon is rendered entirely from original vector drawing code in `tools/Ic
 
 The shipped application has no third-party runtime dependencies. It links only Apple platform frameworks and the Swift runtime supplied by the toolchain. The repository is licensed under MIT.
 
-Release archives are produced by `scripts/package_app.sh`. The script cross-builds arm64 and x86_64 binaries, combines them into a universal executable, generates the original icon, applies an ad-hoc code signature, normalizes archive timestamps, strips extra ZIP metadata, and writes a SHA-256 file.
+Public releases are deterministic tagged source archives produced by `scripts/package_source.sh` and accompanied by a SHA-256 file. The supported Homebrew formula compiles that exact source inside Homebrew's build sandbox, generates the original icon, applies a local ad-hoc bundle signature, and installs no downloaded executable app.
 
-The ad-hoc signature provides bundle integrity but is not a Developer ID signature and is not notarization. Until a maintainer provides Apple-issued signing and notarization credentials outside the repository, Gatekeeper may block the first launch. The documented recovery is the narrow, user-visible **Open Anyway** flow in macOS System Settings. Neither the cask nor the app removes quarantine metadata.
+`scripts/package_app.sh` also cross-builds arm64 and x86_64 binaries, combines them into a universal executable, normalizes archive timestamps, and writes a checksum for CI and maintainer verification. That ad-hoc-signed app archive is not distributed to users. The prebuilt Homebrew cask is disabled until Developer ID signing and Apple notarization are available; the project does not instruct users to remove quarantine metadata or override Gatekeeper.
