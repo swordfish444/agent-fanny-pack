@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Public-safety and dependency scan
+        run: ./scripts/public_safety_scan.sh
+      - name: Build release app
+        run: swift build -c release --product AgentFannyPack
+      - name: Run deterministic provider and privacy tests
+        run: swift run -c release AgentFannyPackTests
+      - name: Package universal app
+        run: ./scripts/package_app.sh 0.1.0 dist
+      - name: Verify bundle and archive
+        run: |
+          codesign --verify --deep --strict ".build/package-stage/Agent Fanny Pack.app"
+          (cd dist && shasum -a 256 -c Agent-Fanny-Pack-0.1.0.zip.sha256)
+          file ".build/package-stage/Agent Fanny Pack.app/Contents/MacOS/AgentFannyPack" | grep 'universal binary'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Agent-Fanny-Pack-0.1.0
+          path: |
+            dist/Agent-Fanny-Pack-0.1.0.zip
+            dist/Agent-Fanny-Pack-0.1.0.zip.sha256
+          if-no-files-found: error
