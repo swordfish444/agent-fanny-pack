@@ -8,13 +8,16 @@ final class AppModel: ObservableObject {
     @Published var pendingSwitch: AccountProfile?
     @Published var isRefreshing = false
     @Published var notice: String?
+    @Published var showAllQuotaWindows: Bool
 
     let isPreview: Bool
     private let store: MetadataStore
+    private var loginProcesses: [String: Process] = [:]
 
     init(preview: Bool = false, store: MetadataStore = MetadataStore()) {
         self.isPreview = preview
         self.store = store
+        self.showAllQuotaWindows = preview ? false : UserDefaults.standard.bool(forKey: "showAllQuotaWindows")
         if preview {
             self.state = PreviewData.state(now: Date())
         } else {
@@ -43,11 +46,20 @@ final class AppModel: ObservableObject {
         pendingSwitch = profile
     }
 
+    func setShowAllQuotaWindows(_ value: Bool) {
+        showAllQuotaWindows = value
+        if !isPreview { UserDefaults.standard.set(value, forKey: "showAllQuotaWindows") }
+    }
+
     func confirmSwitch() {
         guard let profile = pendingSwitch else { return }
         defer { pendingSwitch = nil }
         switch profile.switchCapability {
         case .isolatedProfile:
+            if !profile.connected {
+                beginConnection(for: profile)
+                return
+            }
             do {
                 try state.setActive(profileID: profile.id)
                 if !isPreview { try store.save(state) }
@@ -63,6 +75,39 @@ final class AppModel: ObservableObject {
             notice = "Open Codex, sign out and back in, then refresh here. Agent Fanny Pack will not claim a switch without app-owned readback."
         case .unsupported:
             notice = "That zipper is closed: this provider has no supported safe switch contract yet."
+        }
+    }
+
+    private func beginConnection(for profile: AccountProfile) {
+        guard loginProcesses[profile.id] == nil else {
+            notice = "A sign-in is already open for \(profile.label)."
+            return
+        }
+        do {
+            let spec = try Switching.loginCommand(for: profile)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: spec.executable)
+            process.arguments = spec.arguments
+            process.environment = ProcessInfo.processInfo.environment.merging(spec.environment) { _, new in new }
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] finished in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.loginProcesses[profile.id] = nil
+                    if finished.terminationStatus == 0 {
+                        self.notice = "Sign-in finished for \(profile.label). Refreshing its account state."
+                        self.refresh()
+                    } else {
+                        self.notice = "Sign-in did not finish. Your existing sessions were not changed."
+                    }
+                }
+            }
+            try process.run()
+            loginProcesses[profile.id] = process
+            notice = "Opening the provider's sign-in for \(profile.label) in its isolated profile."
+        } catch {
+            notice = Redactor.text(error.localizedDescription)
         }
     }
 

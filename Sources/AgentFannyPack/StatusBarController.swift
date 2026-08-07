@@ -23,7 +23,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         popover.behavior = .transient
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.contentSize = NSSize(width: 440, height: 780)
+        popover.contentSize = NSSize(width: 440, height: 690)
         popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
         popover.delegate = self
     }

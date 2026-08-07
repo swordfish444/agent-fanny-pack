@@ -110,9 +110,11 @@ let tests: [(String, () throws -> Void)] = [
         let codex = AccountProfile(id: "codex", surface: .codexCLI, label: "Codex", configurationHome: "/tmp/codex profile", switchCapability: .isolatedProfile)
         let claude = AccountProfile(id: "claude", surface: .claudeCode, label: "Claude", configurationHome: "/tmp/claude", switchCapability: .isolatedProfile)
         let codexSpec = try Switching.command(for: codex, passthrough: ["--version"])
+        let codexLogin = try Switching.loginCommand(for: codex)
         let claudeSpec = try Switching.loginCommand(for: claude)
         try expect(codexSpec.environment == ["CODEX_HOME": "/tmp/codex profile"], "Codex home is wrong")
         try expect(codexSpec.arguments == ["codex", "--version"], "Codex arguments are wrong")
+        try expect(codexLogin.arguments == ["codex", "login"], "Codex login arguments are wrong")
         try expect(claudeSpec.environment == ["CLAUDE_CONFIG_DIR": "/tmp/claude"], "Claude home is wrong")
         try expect(claudeSpec.arguments == ["claude", "auth", "login"], "Claude login command is wrong")
         let displayed = try Switching.displayCommand(for: codex)
@@ -185,6 +187,15 @@ let tests: [(String, () throws -> Void)] = [
         try expect(QuotaFormatting.countdown(to: reset, now: now) == "resets in 2h 26m", "Countdown is wrong")
         try expect(QuotaFormatting.absoluteReset(reset, timeZone: TimeZone(secondsFromGMT: 0)!).contains("2027"), "Absolute reset is wrong")
         try expect(QuotaFormatting.compactAbsoluteReset(reset, timeZone: TimeZone(secondsFromGMT: 0)!).contains("Jan"), "Compact absolute reset is wrong")
+    }),
+    ("Weekly quota is the compact default", {
+        let windows = [
+            QuotaWindow(id: "primary", label: "5h", usedPercent: 20, resetsAt: Date()),
+            QuotaWindow(id: "secondary", label: "7d", usedPercent: 40, resetsAt: Date())
+        ]
+        let snapshot = QuotaSnapshot(profileID: "x", windows: windows, fetchedAt: Date(), source: .codexAppServer)
+        try expect(snapshot.displayWindows(showAll: false).map(\.label) == ["7d"], "Compact mode did not prefer the weekly window")
+        try expect(snapshot.displayWindows(showAll: true) == windows, "Expanded mode did not preserve every quota window")
     }),
     ("Freshness transitions", {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

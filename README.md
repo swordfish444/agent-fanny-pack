@@ -27,7 +27,7 @@ Requires macOS 13 or later. The release app is universal for Apple Silicon and I
 ## What is packed
 
 - Provider-scoped active accounts: one Codex CLI profile and one Claude Code profile can both be active. They do not compete for a global crown.
-- First-party quota bars, reset countdowns, absolute reset times, freshness, and explicit stale/offline/error states.
+- Compact weekly/7-day quota bars by default, with reset countdowns, absolute reset times, freshness, and explicit stale/offline/error states. The pouch setting can reveal 5-hour/session and other windows.
 - Guarded switching through isolated provider configuration homes. Running sessions keep the credentials they started with.
 - Native status item and popover only. No Dock app window in normal operation.
 - Light and dark appearances, keyboard controls, VoiceOver labels, textual status alongside color, and reduced-motion support.
@@ -86,7 +86,7 @@ The bridge prints a compact `AFP · 5h … · 7d …` status line while saving o
 ## Zip over safely
 
 1. Open the pouch from the menu bar.
-2. Choose **Switch** on an inactive Codex CLI or Claude Code profile.
+2. Choose **Connect** for a signed-out isolated profile or **Switch** on an inactive connected Codex CLI or Claude Code profile.
 3. Read the confirmation: only the Agent Fanny Pack launcher selection changes.
 4. Start a new provider session through the helper:
 

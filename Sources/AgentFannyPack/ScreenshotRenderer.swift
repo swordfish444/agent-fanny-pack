@@ -3,13 +3,14 @@ import SwiftUI
 
 @MainActor
 enum ScreenshotRenderer {
-    static func render(to url: URL, dark: Bool) throws {
+    static func render(to url: URL, dark: Bool, showAllQuotas: Bool = false) throws {
         let model = AppModel(preview: true)
+        model.setShowAllQuotaWindows(showAllQuotas)
         let appearance: NSAppearance.Name = dark ? .darkAqua : .aqua
         let content = PopoverView(model: model)
             .environment(\.colorScheme, dark ? .dark : .light)
         let hosting = NSHostingView(rootView: content)
-        hosting.frame = NSRect(x: 0, y: 0, width: 440, height: 780)
+        hosting.frame = NSRect(x: 0, y: 0, width: 440, height: 690)
         hosting.appearance = NSAppearance(named: appearance)
 
         let window = NSWindow(

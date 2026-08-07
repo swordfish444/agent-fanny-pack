@@ -12,7 +12,8 @@ enum CommandLineMode {
             case "--render-screenshot":
                 guard arguments.count >= 3 else { return usage("Missing screenshot path") }
                 let dark = arguments.contains("--dark")
-                try ScreenshotRenderer.render(to: URL(fileURLWithPath: arguments[2]), dark: dark)
+                let showAllQuotas = arguments.contains("--all-quotas")
+                try ScreenshotRenderer.render(to: URL(fileURLWithPath: arguments[2]), dark: dark, showAllQuotas: showAllQuotas)
                 print("Rendered synthetic UI to \(arguments[2])")
                 return 0
             case "--ui-smoke-test":

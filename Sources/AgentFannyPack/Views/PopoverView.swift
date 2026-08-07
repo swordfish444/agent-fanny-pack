@@ -11,7 +11,7 @@ struct PopoverView: View {
         VStack(spacing: 0) {
             PouchHeader(isRefreshing: model.isRefreshing)
             ScrollView {
-                LazyVStack(spacing: 16) {
+                LazyVStack(spacing: 12) {
                     ForEach(model.groupedProfiles, id: \.0.id) { surface, profiles in
                         ProviderSection(
                             surface: surface,
@@ -20,18 +20,18 @@ struct PopoverView: View {
                         )
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
             footer
         }
-        .frame(width: 440, height: 780)
+        .frame(width: 440, height: 690)
         .background(PouchPalette.background(for: colorScheme))
         .alert(item: $model.pendingSwitch) { profile in
             Alert(
-                title: Text(profile.switchCapability == .guidedOnly ? "Open the guided switch?" : "Zip over to \(profile.label)?"),
+                title: Text(alertTitle(for: profile)),
                 message: Text(switchMessage(for: profile)),
-                primaryButton: .default(Text(profile.switchCapability == .guidedOnly ? "Open Codex" : "Switch launcher"), action: model.confirmSwitch),
+                primaryButton: .default(Text(actionTitle(for: profile)), action: model.confirmSwitch),
                 secondaryButton: .cancel()
             )
         }
@@ -49,10 +49,26 @@ struct PopoverView: View {
             Image(systemName: "lock.shield.fill")
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text("Metadata only · no transcripts · no telemetry")
+            Text("Local metadata · no transcripts · no telemetry")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            Menu {
+                Toggle(
+                    "Show 5-hour and other quota windows",
+                    isOn: Binding(
+                        get: { model.showAllQuotaWindows },
+                        set: model.setShowAllQuotaWindows
+                    )
+                )
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .frame(width: 20, height: 20)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Quota display settings")
+            .accessibilityLabel("Quota display settings")
             Button(action: model.refresh) {
                 Image(systemName: "arrow.clockwise")
                     .frame(width: 20, height: 20)
@@ -72,7 +88,21 @@ struct PopoverView: View {
         if profile.switchCapability == .guidedOnly {
             return "Agent Fanny Pack cannot safely replace the app's credentials. It will open Codex so you can sign out and in yourself; the switch stays unconfirmed until you refresh."
         }
+        if !profile.connected {
+            return "This starts the provider's official sign-in in this isolated profile. It does not replace credentials or interrupt any running session."
+        }
         return "Only the Agent Fanny Pack launcher changes. Existing Codex or Claude sessions keep their current account and credentials."
+    }
+
+    private func alertTitle(for profile: AccountProfile) -> String {
+        if profile.switchCapability == .guidedOnly { return "Open the guided switch?" }
+        if !profile.connected { return "Connect \(profile.label)?" }
+        return "Zip over to \(profile.label)?"
+    }
+
+    private func actionTitle(for profile: AccountProfile) -> String {
+        if profile.switchCapability == .guidedOnly { return "Open Codex" }
+        return profile.connected ? "Switch launcher" : "Connect"
     }
 }
 
@@ -174,7 +204,7 @@ private struct ProviderSection: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 ProviderBadge(surface: surface)
                 Text(surface.displayName)
@@ -191,6 +221,7 @@ private struct ProviderSection: View {
                     profile: profile,
                     snapshot: model.snapshot(for: profile),
                     isActive: model.isActive(profile),
+                    showAllQuotaWindows: model.showAllQuotaWindows,
                     switchAction: { model.requestSwitch(profile) }
                 )
             }
@@ -238,79 +269,93 @@ private struct AccountCard: View {
     let profile: AccountProfile
     let snapshot: QuotaSnapshot?
     let isActive: Bool
+    let showAllQuotaWindows: Bool
     let switchAction: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 7) {
-                        Text(profile.label)
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                        if isActive {
-                            StatusPill(text: "ACTIVE", icon: "checkmark.circle.fill", tint: PouchPalette.success)
-                        }
-                    }
+                    Text(profile.label)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                     Text(profile.identity ?? identityFallback)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                actionButton
+                VStack(alignment: .trailing, spacing: 4) {
+                    if isActive { AnimatedActiveBadge() }
+                    if shouldShowAction { actionButton }
+                }
             }
 
-            if let snapshot, let primary = snapshot.windows.first {
-                QuotaBar(window: primary)
-                ResetLine(window: primary)
-                if snapshot.windows.count > 1 {
-                    ForEach(snapshot.windows.dropFirst()) { window in
-                        VStack(spacing: 4) {
-                            HStack {
-                                Text(window.label)
-                                Spacer()
-                                Text(QuotaFormatting.percentRemaining(window.remainingPercent))
-                            }
-                            .font(.caption.weight(.semibold))
-                            ResetLine(window: window)
-                        }
+            if let snapshot {
+                let windows = snapshot.displayWindows(showAll: showAllQuotaWindows)
+                if windows.isEmpty {
+                    compactUnavailable
+                } else {
+                    ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
+                        CompactQuotaRow(
+                            window: window,
+                            health: index == 0 ? QuotaFormatting.health(for: snapshot) : nil,
+                            age: index == 0 ? QuotaFormatting.age(snapshot.fetchedAt) : nil
+                        )
                     }
                 }
-                HStack(spacing: 6) {
-                    HealthDot(health: QuotaFormatting.health(for: snapshot))
-                    Text("\(snapshot.source.rawValue) · \(QuotaFormatting.age(snapshot.fetchedAt))")
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
             } else {
-                HStack(alignment: .top, spacing: 7) {
-                    HealthDot(health: profile.switchCapability == .unsupported ? .unsupported : .unavailable)
-                    Text(profile.lastError ?? "No authoritative quota snapshot yet.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                compactUnavailable
             }
         }
-        .padding(12)
-        .background(PouchPalette.card(for: colorScheme), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(PouchPalette.card(for: colorScheme), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(colorScheme == .dark ? 0.15 : 0.08), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
     }
 
+    private var shouldShowAction: Bool {
+        profile.switchCapability == .unsupported ||
+            profile.switchCapability == .guidedOnly ||
+            !profile.connected ||
+            !isActive
+    }
+
     @ViewBuilder private var actionButton: some View {
         if profile.switchCapability == .unsupported {
             StatusPill(text: "ROADMAP", icon: "road.lanes", tint: .secondary)
-        } else if !isActive || profile.switchCapability == .guidedOnly {
-            Button(profile.switchCapability == .guidedOnly ? "Guide" : "Switch", action: switchAction)
+        } else {
+            Button(actionLabel, action: switchAction)
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .accessibilityLabel(profile.switchCapability == .guidedOnly ? "Open guided switch for \(profile.label)" : "Switch launcher to \(profile.label)")
+                .accessibilityLabel(actionAccessibilityLabel)
         }
+    }
+
+    private var compactUnavailable: some View {
+        HStack(spacing: 6) {
+            HealthDot(health: profile.switchCapability == .unsupported ? .unsupported : .unavailable)
+            Text(profile.lastError ?? "No authoritative quota snapshot yet.")
+                .lineLimit(1)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .help(profile.lastError ?? "No authoritative quota snapshot yet.")
+    }
+
+    private var actionLabel: String {
+        if profile.switchCapability == .guidedOnly { return "Guide" }
+        return profile.connected ? "Switch" : "Connect"
+    }
+
+    private var actionAccessibilityLabel: String {
+        if profile.switchCapability == .guidedOnly { return "Open guided switch for \(profile.label)" }
+        if !profile.connected { return "Connect \(profile.label)" }
+        return "Switch launcher to \(profile.label)"
     }
 
     private var identityFallback: String {
@@ -318,38 +363,30 @@ private struct AccountCard: View {
     }
 }
 
-private struct ResetLine: View {
+private struct CompactQuotaRow: View {
     let window: QuotaWindow
+    let health: SourceHealth?
+    let age: String?
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "clock")
-                .accessibilityHidden(true)
-            Text("\(window.label) \(QuotaFormatting.countdown(to: window.resetsAt))")
-            Spacer(minLength: 8)
-            Text(QuotaFormatting.compactAbsoluteReset(window.resetsAt))
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.85)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.label) quota reset")
-        .accessibilityValue("\(QuotaFormatting.countdown(to: window.resetsAt)); \(QuotaFormatting.absoluteReset(window.resetsAt))")
-    }
-}
-
-private struct QuotaBar: View {
-    let window: QuotaWindow
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Text(window.label)
                     .font(.caption.weight(.semibold))
-                Spacer()
                 Text(QuotaFormatting.percentRemaining(window.remainingPercent))
-                    .font(.caption.weight(.bold))
+                    .font(.caption2.weight(.bold))
+                Spacer(minLength: 6)
+                if let health, let age {
+                    HealthDot(health: health)
+                    Text("· \(age)")
+                        .foregroundStyle(.secondary)
+                }
+                Text("\(QuotaFormatting.countdown(to: window.resetsAt)) · \(QuotaFormatting.compactAbsoluteReset(window.resetsAt))")
+                    .foregroundStyle(.secondary)
             }
+            .font(.caption2)
+            .lineLimit(1)
+            .minimumScaleFactor(0.78)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.10))
@@ -358,7 +395,7 @@ private struct QuotaBar: View {
                         .frame(width: max(4, geometry.size.width * window.remainingPercent / 100))
                 }
             }
-            .frame(height: 8)
+            .frame(height: 6)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.label) quota")
@@ -369,6 +406,40 @@ private struct QuotaBar: View {
         if window.remainingPercent < 20 { return PouchPalette.danger }
         if window.remainingPercent < 40 { return PouchPalette.warning }
         return PouchPalette.success
+    }
+}
+
+private struct AnimatedActiveBadge: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ZStack {
+                Circle()
+                    .stroke(PouchPalette.success.opacity(0.42), lineWidth: 1.5)
+                    .frame(width: 9, height: 9)
+                    .scaleEffect(pulsing ? 1.7 : 1)
+                    .opacity(pulsing ? 0 : 0.8)
+                Circle()
+                    .fill(PouchPalette.success)
+                    .frame(width: 7, height: 7)
+            }
+            Text("ACTIVE")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+        }
+        .foregroundStyle(PouchPalette.success)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(PouchPalette.success.opacity(0.13), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Active account")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: false)) {
+                pulsing = true
+            }
+        }
     }
 }
 

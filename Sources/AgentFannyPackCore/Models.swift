@@ -100,6 +100,16 @@ public struct QuotaSnapshot: Codable, Equatable, Identifiable, Sendable {
         self.fetchedAt = fetchedAt
         self.source = source
     }
+
+    public func displayWindows(showAll: Bool) -> [QuotaWindow] {
+        guard !showAll else { return windows }
+        guard let preferred = windows.first(where: { window in
+            let label = window.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            return label == "week" || label == "weekly" || label == "1w" ||
+                label == "7d" || label.contains("seven day")
+        }) ?? windows.last else { return [] }
+        return [preferred]
+    }
 }
 
 public struct AccountProfile: Codable, Equatable, Identifiable, Sendable {
