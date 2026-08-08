@@ -98,12 +98,33 @@ public struct ProfileDiscovery {
             if fileManager.fileExists(atPath: home.appendingPathComponent(".credentials.json").path) {
                 return true
             }
-            return Self.keychainHoldsClaudeCredentials()
+            // The keychain item is not per-home, so it only evidences the default home.
+            // Letting it vouch for every isolated home would mark them all signed in.
+            return home.lastPathComponent == ".claude" && Self.keychainHoldsClaudeCredentials()
         case .codexMacApp, .cursor:
             // App-owned or unsupported: there is no readable local signal, and guessing
             // one would be a claim this app cannot stand behind.
             return false
         }
+    }
+
+    /// Every configuration home on this machine that already holds a session. Connect adopts
+    /// one of these instead of sending the user through a login they do not need: a session is
+    /// just a directory, so pointing at it copies no credential and disturbs no running app.
+    public func existingSessions(for surface: ProviderSurface) -> [URL] {
+        let prefix: String
+        switch surface {
+        case .codexCLI, .codexMacApp: prefix = ".codex"
+        case .claudeCode: prefix = ".claude"
+        case .cursor: return []
+        }
+        let credentialSurface: ProviderSurface = surface == .codexMacApp ? .codexCLI : surface
+        let names = ((try? fileManager.contentsOfDirectory(atPath: homeDirectory.path)) ?? [])
+            .filter { $0 == prefix || $0.hasPrefix(prefix + "-") }
+            .sorted()
+        return names
+            .map { homeDirectory.appendingPathComponent($0, isDirectory: true) }
+            .filter { isSignedIn(surface: credentialSurface, home: $0) }
     }
 
     /// Probes for the presence of the item only. `kSecReturnAttributes` keeps the secret out

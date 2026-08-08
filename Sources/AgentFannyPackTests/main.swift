@@ -197,6 +197,30 @@ let tests: [(String, () throws -> Void)] = [
         try expect(snapshot.displayWindows(showAll: false).map(\.label) == ["7d"], "Compact mode did not prefer the weekly window")
         try expect(snapshot.displayWindows(showAll: true) == windows, "Expanded mode did not preserve every quota window")
     }),
+    ("Existing sessions are found so Connect can skip a login", {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("afp-sessions-\(UUID().uuidString)")
+        let fm = FileManager.default
+        // Two isolated Codex homes, only one of which holds a session.
+        for name in [".codex", ".codex-work", ".codex-empty"] {
+            try fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try Data("{}".utf8).write(to: root.appendingPathComponent(".codex/auth.json"))
+        try Data("{}".utf8).write(to: root.appendingPathComponent(".codex-work/auth.json"))
+        let discovery = ProfileDiscovery(homeDirectory: root)
+
+        let sessions = discovery.existingSessions(for: .codexCLI).map(\.lastPathComponent)
+        try expect(sessions == [".codex", ".codex-work"], "Expected both signed-in homes, got \(sessions)")
+        try expect(!sessions.contains(".codex-empty"), "A home with no credential was offered as a session")
+
+        // The desktop app shares CODEX_HOME, so it sees the same live sessions.
+        try expect(discovery.existingSessions(for: .codexMacApp).count == 2, "Codex desktop did not see the shared sessions")
+
+        // The Claude keychain is not per-home, so it must not vouch for isolated homes.
+        try fm.createDirectory(at: root.appendingPathComponent(".claude-lab"), withIntermediateDirectories: true)
+        try expect(discovery.isSignedIn(surface: .claudeCode, home: root.appendingPathComponent(".claude-lab")) == false,
+                   "An isolated Claude home claimed the keychain session")
+        try? fm.removeItem(at: root)
+    }),
     ("Discovery reports signed-in only when a credential exists", {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("afp-signin-\(UUID().uuidString)")
         let codex = root.appendingPathComponent(".codex")

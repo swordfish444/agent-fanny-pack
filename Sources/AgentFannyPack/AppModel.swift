@@ -33,7 +33,6 @@ final class AppModel: ObservableObject {
 
     let isPreview: Bool
     private let store: MetadataStore
-    private var loginProcesses: [String: Process] = [:]
 
     init(preview: Bool = false, store: MetadataStore = MetadataStore()) {
         self.isPreview = preview
@@ -80,6 +79,32 @@ final class AppModel: ObservableObject {
         case .claudeCode: return home.appendingPathComponent(".claude")
         case .cursor: return nil
         }
+    }
+
+    /// Adopts any configuration home on this machine that already holds a session and is not
+    /// registered yet, so Connect reuses a live login instead of demanding a new one. Returns
+    /// the home it took, or nil when every existing session is already accounted for.
+    @discardableResult
+    func adoptExistingSession(for surface: ProviderSurface) -> String? {
+        let registered = Set(state.profiles.compactMap(\.configurationHome))
+        let candidates = ProfileDiscovery().existingSessions(for: surface)
+        guard let home = candidates.first(where: { !registered.contains($0.path) }) else { return nil }
+        let index = state.profiles.filter { $0.surface == surface }.count + 1
+        let id = "\(surface.rawValue)-session-\(index)"
+        let profile = AccountProfile(
+            id: id,
+            surface: surface,
+            label: home.lastPathComponent == ".codex" || home.lastPathComponent == ".claude"
+                ? surface.displayName
+                : home.lastPathComponent,
+            configurationHome: home.path,
+            switchCapability: .isolatedProfile,
+            connected: true
+        )
+        state.profiles.append(profile)
+        if state.activeProfileID(for: surface) == nil { try? state.setActive(profileID: id) }
+        if !isPreview { try? store.save(state) }
+        return home.lastPathComponent
     }
 
     /// Registers the shared home as a real entry once it actually holds a session. Called
@@ -138,8 +163,8 @@ final class AppModel: ObservableObject {
                 return
             }
             // Already signed in: adopt it now rather than sending the user somewhere pointless.
-            if self.adoptStandardHomeIfSignedIn(for: .codexMacApp) {
-                self.notice = "Codex is already signed in. Added it."
+            if let adopted = self.adoptExistingSession(for: .codexMacApp) {
+                self.notice = "Connected the Codex session already signed in at \(adopted). No sign-out needed."
                 return
             }
             self.awaitingConnection.insert(.codexMacApp)
@@ -154,8 +179,8 @@ final class AppModel: ObservableObject {
             notice = "Synthetic preview: no account is added."
             return
         }
-        if adoptStandardHomeIfSignedIn(for: surface) {
-            notice = "Added the \(surface.displayName) account already signed in on this Mac."
+        if let adopted = adoptExistingSession(for: surface) {
+            notice = "Connected the \(surface.displayName) session already signed in at \(adopted). No login needed."
             return
         }
         awaitingConnection.insert(surface)
@@ -358,37 +383,45 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The provider's own login prints an authorisation URL and waits for a browser
+    /// callback. Run headless with its output discarded it is invisible and impossible to
+    /// finish, which is why Connect looked dead. Terminal gives the user the flow the
+    /// provider actually designed, and the browser opens from there.
     private func beginConnection(for profile: AccountProfile) {
-        guard loginProcesses[profile.id] == nil else {
-            notice = "A sign-in is already open for \(profile.label)."
-            return
-        }
         do {
-            let spec = try Switching.loginCommand(for: profile)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: spec.executable)
-            process.arguments = spec.arguments
-            process.environment = ProcessInfo.processInfo.environment.merging(spec.environment) { _, new in new }
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { [weak self] finished in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.loginProcesses[profile.id] = nil
-                    if finished.terminationStatus == 0 {
-                        self.notice = "Sign-in finished for \(profile.label). Refreshing its account state."
-                        self.refresh()
-                    } else {
-                        self.notice = "Sign-in did not finish. Your existing sessions were not changed."
-                    }
-                }
+            // codex and claude refuse to start when the isolated home does not exist yet.
+            if let home = profile.configurationHome {
+                try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
             }
-            try process.run()
-            loginProcesses[profile.id] = process
-            notice = "Opening the provider's sign-in for \(profile.label) in its isolated profile."
+            let spec = try Switching.loginCommand(for: profile)
+            let assignments = spec.environment.keys.sorted().map { key in
+                "\(key)=\(Switching.shellQuote(spec.environment[key] ?? ""))"
+            }
+            let line = (assignments + spec.arguments.map(Switching.shellQuote)).joined(separator: " ")
+            guard Self.runInTerminal(line) else {
+                notice = "Could not open Terminal to run the sign-in."
+                return
+            }
+            awaitingConnection.insert(profile.surface)
+            notice = "Signing in to \(profile.label) in Terminal. Finish in your browser, then reopen the pouch."
         } catch {
             notice = Redactor.text(error.localizedDescription)
         }
+    }
+
+    private static func runInTerminal(_ command: String) -> Bool {
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "Terminal"
+            activate
+            do script "\(escaped)"
+        end tell
+        """
+        var failure: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&failure)
+        return failure == nil
     }
 
     func refresh() {
