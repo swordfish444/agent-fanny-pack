@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var state: PersistedState
     @Published var pendingSwitch: AccountProfile?
     @Published var pendingDelete: AccountProfile?
+    /// Surfaces the user has asked to connect, awaiting the provider's own sign-in.
+    private var awaitingConnection: Set<ProviderSurface> = []
     @Published var isRefreshing = false
     @Published var notice: String?
     @Published var showAllQuotaWindows: Bool
@@ -23,7 +25,7 @@ final class AppModel: ObservableObject {
             self.state = PreviewData.state(now: PreviewData.pinnedNow)
         } else {
             var loaded = (try? store.load()) ?? PersistedState()
-            Self.mergeDefaultProfiles(into: &loaded)
+            Self.dropInventedPlaceholders(from: &loaded)
             self.state = loaded
             try? store.save(loaded)
         }
@@ -39,24 +41,64 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Auto-discovered placeholders that exist only so a surface has something to point at.
-    /// They carry no account, so showing one signed-out is just noise where an Add belongs.
+    /// Placeholder ids invented by earlier builds, cleared on load.
     private static let discoveredDefaultIDs: Set<String> = [
         "codex-default", "claude-default", "codex-macos-guided", "cursor-deferred"
     ]
 
     func profiles(for surface: ProviderSurface, filter: AccountFilter) -> [AccountProfile] {
-        state.profiles.filter { profile in
-            guard profile.surface == surface, matches(profile, filter: filter) else { return false }
-            // A profile the user created stays visible when signed out so it can be
-            // reconnected; an untouched discovered default does not.
-            if !profile.connected && Self.discoveredDefaultIDs.contains(profile.id) { return false }
-            return true
-        }
+        state.profiles.filter { $0.surface == surface && matches($0, filter: filter) }
     }
 
     /// Only the isolated-profile surfaces can take a new account: the Codex macOS app owns
     /// its own session, and Cursor has no supported multi-profile contract.
+    /// The home a provider signs into by default. The Codex desktop app bundles the codex
+    /// CLI and honours CODEX_HOME, so signing in there writes the same ~/.codex the CLI reads
+    /// -- which is why a desktop sign-in is visible to this app at all.
+    func standardHome(for surface: ProviderSurface) -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        switch surface {
+        case .codexCLI, .codexMacApp: return home.appendingPathComponent(".codex")
+        case .claudeCode: return home.appendingPathComponent(".claude")
+        case .cursor: return nil
+        }
+    }
+
+    /// Registers the shared home as a real entry once it actually holds a session. Called
+    /// after the user asks to connect, never speculatively, so nothing is invented for them.
+    @discardableResult
+    func adoptStandardHomeIfSignedIn(for surface: ProviderSurface) -> Bool {
+        guard let home = standardHome(for: surface) else { return false }
+        guard ProfileDiscovery().isSignedIn(surface: surface == .codexMacApp ? .codexCLI : surface, home: home) else { return false }
+        if state.profiles.contains(where: { $0.configurationHome == home.path && $0.surface == surface }) { return false }
+        let id = "\(surface.rawValue)-signed-in"
+        guard !state.profiles.contains(where: { $0.id == id }) else { return false }
+        let profile = AccountProfile(
+            id: id,
+            surface: surface,
+            label: surface.displayName,
+            configurationHome: home.path,
+            switchCapability: surface == .codexMacApp ? .guidedOnly : .isolatedProfile,
+            connected: true
+        )
+        state.profiles.append(profile)
+        if state.activeProfileID(for: surface) == nil, profile.switchCapability != .unsupported {
+            try? state.setActive(profileID: id)
+        }
+        if !isPreview { try? store.save(state) }
+        return true
+    }
+
+    /// Re-checks any surface the user asked to connect. Pure local file and keychain reads,
+    /// no provider process, run when the popover opens rather than on a timer.
+    func reconcilePendingConnections() {
+        guard !awaitingConnection.isEmpty else { return }
+        for surface in awaitingConnection where adoptStandardHomeIfSignedIn(for: surface) {
+            awaitingConnection.remove(surface)
+            notice = "Connected \(surface.displayName)."
+        }
+    }
+
     func canAddProfile(to surface: ProviderSurface) -> Bool {
         surface == .codexCLI || surface == .claudeCode
     }
@@ -73,12 +115,18 @@ final class AppModel: ObservableObject {
                 self.notice = "Synthetic preview: Codex is not opened."
                 return
             }
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
-                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
-                self.notice = "Sign in inside Codex, then refresh here."
-            } else {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else {
                 self.notice = "The Codex desktop app is not installed."
+                return
             }
+            // Already signed in: adopt it now rather than sending the user somewhere pointless.
+            if self.adoptStandardHomeIfSignedIn(for: .codexMacApp) {
+                self.notice = "Codex is already signed in. Added it."
+                return
+            }
+            self.awaitingConnection.insert(.codexMacApp)
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            self.notice = "Sign in inside Codex; this fills in when you reopen the pouch." 
         }
     }
 
@@ -88,6 +136,11 @@ final class AppModel: ObservableObject {
             notice = "Synthetic preview: no account is added."
             return
         }
+        if adoptStandardHomeIfSignedIn(for: surface) {
+            notice = "Added the \(surface.displayName) account already signed in on this Mac."
+            return
+        }
+        awaitingConnection.insert(surface)
         let existing = state.profiles.filter { $0.surface == surface }.count
         let slug = surface == .codexCLI ? "codex" : "claude"
         var index = existing + 1
@@ -200,11 +253,8 @@ final class AppModel: ObservableObject {
         state.latestSnapshot(for: profile.id)
     }
 
-    /// A discovered default is recreated on next launch, so offering to delete one would
-    /// be a button that undoes itself. Only profiles the user added can be removed.
-    func canDelete(_ profile: AccountProfile) -> Bool {
-        !Self.discoveredDefaultIDs.contains(profile.id)
-    }
+    /// Every listed profile now exists because the user added it, so every one can go.
+    func canDelete(_ profile: AccountProfile) -> Bool { true }
 
     /// Rename uses a native prompt rather than inline editing: it is a rare action, and a
     /// text field living in every row would clutter the thing the row exists to show.
@@ -364,32 +414,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private static func mergeDefaultProfiles(into state: inout PersistedState) {
-        for profile in ProfileDiscovery().defaults() where !state.profiles.contains(where: { $0.id == profile.id }) {
-            state.profiles.append(profile)
-        }
-        if !state.profiles.contains(where: { $0.surface == .codexMacApp }) {
-            state.profiles.append(AccountProfile(
-                id: "codex-macos-guided",
-                surface: .codexMacApp,
-                label: "Current app session",
-                switchCapability: .guidedOnly
-            ))
-        }
-        if !state.profiles.contains(where: { $0.surface == .cursor }) {
-            state.profiles.append(AccountProfile(
-                id: "cursor-deferred",
-                surface: .cursor,
-                label: "Cursor integration",
-                switchCapability: .unsupported,
-                lastError: "Deferred until Cursor exposes a supported personal quota and isolated-profile contract."
-            ))
-        }
-        for surface in ProviderSurface.allCases {
-            let candidates = state.profiles.filter { $0.surface == surface && $0.switchCapability != .unsupported }
-            if state.activeProfileID(for: surface) == nil, let first = candidates.first {
-                state.activeProfileBySurface[surface.rawValue] = first.id
-            }
+    /// Earlier builds invented "Default Codex", "Default Claude", a Codex desktop row and a
+    /// Cursor row on first launch. They described directories, not accounts, so they read as
+    /// dead placeholders. Nothing is invented now, and any previously persisted placeholder
+    /// is dropped so it does not linger in saved state.
+    private static func dropInventedPlaceholders(from state: inout PersistedState) {
+        for id in discoveredDefaultIDs {
+            state.removeProfile(id: id)
         }
     }
 }

@@ -697,15 +697,12 @@ private struct AccountRow: View {
 
     @ViewBuilder private var action: some View {
         if showsActive {
-            HStack(spacing: 5) {
-                Text("Active")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Palette.good)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Palette.good)
-            }
-            .frame(width: Metrics.buttonWidth, height: Metrics.buttonHeight)
+            // No chevron: this reports the current state, it is not a menu. Row actions
+            // live in the overflow control beside it.
+            Text("Active")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Palette.good)
+                .frame(width: Metrics.buttonWidth, height: Metrics.buttonHeight)
             .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.good.opacity(0.45), lineWidth: 1)

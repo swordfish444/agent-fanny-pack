@@ -80,6 +80,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     func showPopover() {
         guard let button = statusItem.button else { return }
+        // Cheap local re-check so a sign-in completed in the provider's own app shows up
+        // the next time the pouch is opened, without any polling.
+        model.reconcilePendingConnections()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         keepOnScreen()
