@@ -16,6 +16,24 @@ public enum QuotaFormatting {
         return "resets in \(hours / 24)d \(hours % 24)h"
     }
 
+    /// Bare duration for the compact layout, where a surrounding label already says
+    /// what the number means: "3d 6h" in a row, "3d 6h 54m" in the summary.
+    public static func compactCountdown(to reset: Date, now: Date = Date(), includeMinutes: Bool = false) -> String {
+        let seconds = max(0, Int(reset.timeIntervalSince(now)))
+        let minutes = seconds / 60
+        let hours = minutes / 60
+        let days = hours / 24
+        if days > 0 {
+            let base = "\(days)d \(hours % 24)h"
+            return includeMinutes ? base + " \(minutes % 60)m" : base
+        }
+        if hours > 0 {
+            let base = "\(hours)h"
+            return includeMinutes ? base + " \(minutes % 60)m" : base
+        }
+        return "\(minutes)m"
+    }
+
     public static func absoluteReset(_ reset: Date, timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

@@ -10,7 +10,7 @@ enum ScreenshotRenderer {
         let content = PopoverView(model: model)
             .environment(\.colorScheme, dark ? .dark : .light)
         let hosting = NSHostingView(rootView: content)
-        hosting.frame = NSRect(x: 0, y: 0, width: 440, height: 690)
+        hosting.frame = NSRect(x: 0, y: 0, width: Metrics.width, height: Metrics.height)
         hosting.appearance = NSAppearance(named: appearance)
 
         let window = NSWindow(
@@ -27,9 +27,24 @@ enum ScreenshotRenderer {
         hosting.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.35))
 
-        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+        // Render at 2x so the output is directly comparable with a Retina design
+        // reference instead of being upscaled at comparison time.
+        let scale = 2
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(hosting.bounds.width) * scale,
+            pixelsHigh: Int(hosting.bounds.height.rounded()) * scale,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
             throw CocoaError(.fileWriteUnknown)
         }
+        bitmap.size = hosting.bounds.size
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         guard let png = bitmap.representation(using: .png, properties: [:]) else {
             throw CocoaError(.fileWriteUnknown)

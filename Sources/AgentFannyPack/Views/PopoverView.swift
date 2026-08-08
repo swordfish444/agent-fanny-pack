@@ -2,31 +2,76 @@ import AppKit
 import SwiftUI
 import AgentFannyPackCore
 
+public enum AccountFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case active = "Active"
+    case needsAttention = "Needs attention"
+    public var id: String { rawValue }
+}
+
+/// Every tunable in the approved design lives here so visual QA can be closed
+/// by adjusting numbers rather than restructuring the view tree.
+enum Metrics {
+    static let width: CGFloat = 431
+    static let height: CGFloat = 647.5
+    static let gutter: CGFloat = 12
+    static let cardRadius: CGFloat = 11
+    static let rowRadius: CGFloat = 9
+    static let sectionSpacing: CGFloat = 8
+
+    /// Row columns, measured off the approved design and summing exactly to the
+    /// panel's inner width (431 - 2*12 = 407) so nothing can silently overflow.
+    static let colSelector: CGFloat = 30
+    static let colName: CGFloat = 112
+    static let colQuota: CGFloat = 62
+    static let colReset: CGFloat = 86
+    static let colHealth: CGFloat = 58
+    static let colAction: CGFloat = 54
+    static let rowTrailing: CGFloat = 9
+    static let rowHeight: CGFloat = 48
+    static let sectionHeaderHeight: CGFloat = 34
+
+    // Block-level vertical rhythm, also tuner-controlled.
+    static let headerTop: CGFloat = 13
+    static let headerBottom: CGFloat = 9
+    static let logoSize: CGFloat = 36
+    static let summaryVPad: CGFloat = 9
+    static let blockGap: CGFloat = 8
+    static let tabVPad: CGFloat = 6
+    static let footerVPad: CGFloat = 8
+}
+
 struct PopoverView: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var filter: AccountFilter = .all
 
     var body: some View {
         VStack(spacing: 0) {
-            PouchHeader(isRefreshing: model.isRefreshing)
+            HeaderBar(model: model)
+            SummaryCard(model: model)
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.bottom, Metrics.blockGap)
+            FilterBar(filter: $filter)
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.bottom, Metrics.blockGap)
             ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(model.groupedProfiles, id: \.0.id) { surface, profiles in
-                        ProviderSection(
-                            surface: surface,
-                            profiles: profiles,
-                            model: model
-                        )
+                VStack(spacing: Metrics.sectionSpacing) {
+                    ForEach(model.groupedProfiles, id: \.0.id) { surface, _ in
+                        let profiles = model.profiles(for: surface, filter: filter)
+                        if !profiles.isEmpty {
+                            ProviderSection(surface: surface, profiles: profiles, model: model)
+                        }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.bottom, Metrics.blockGap)
             }
-            footer
+            FooterBar(model: model)
         }
-        .frame(width: 440, height: 690)
-        .background(PouchPalette.background(for: colorScheme))
+        .frame(width: Metrics.width, height: Metrics.height)
+        .background(Palette.canvas(colorScheme))
         .alert(item: $model.pendingSwitch) { profile in
             Alert(
                 title: Text(alertTitle(for: profile)),
@@ -44,46 +89,6 @@ struct PopoverView: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "lock.shield.fill")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Text("Local metadata · no transcripts · no telemetry")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Menu {
-                Toggle(
-                    "Show 5-hour and other quota windows",
-                    isOn: Binding(
-                        get: { model.showAllQuotaWindows },
-                        set: model.setShowAllQuotaWindows
-                    )
-                )
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .frame(width: 20, height: 20)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Quota display settings")
-            .accessibilityLabel("Quota display settings")
-            Button(action: model.refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.borderless)
-            .disabled(model.isRefreshing)
-            .keyboardShortcut("r", modifiers: .command)
-            .help("Refresh first-party account sources")
-            .accessibilityLabel("Refresh accounts")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(PouchPalette.footer(for: colorScheme))
-    }
-
     private func switchMessage(for profile: AccountProfile) -> String {
         if profile.switchCapability == .guidedOnly {
             return "Agent Fanny Pack cannot safely replace the app's credentials. It will open Codex so you can sign out and in yourself; the switch stays unconfirmed until you refresh."
@@ -97,7 +102,7 @@ struct PopoverView: View {
     private func alertTitle(for profile: AccountProfile) -> String {
         if profile.switchCapability == .guidedOnly { return "Open the guided switch?" }
         if !profile.connected { return "Connect \(profile.label)?" }
-        return "Zip over to \(profile.label)?"
+        return "Switch to \(profile.label)?"
     }
 
     private func actionTitle(for profile: AccountProfile) -> String {
@@ -106,97 +111,226 @@ struct PopoverView: View {
     }
 }
 
-private struct PouchHeader: View {
-    let isRefreshing: Bool
-    @Environment(\.colorScheme) private var colorScheme
+// MARK: - Header
+
+private struct HeaderBar: View {
+    @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                PouchMark()
-                    .frame(width: 46, height: 38)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("AGENT FANNY PACK")
-                        .font(.system(size: 19, weight: .black, design: .rounded))
-                        .tracking(0.8)
-                    Text("what’s in the pouch?")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("Refreshing accounts")
-                } else {
-                    Text("PACKED")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(PouchPalette.accent.opacity(0.20), in: Capsule())
-                        .foregroundStyle(.primary)
-                }
+        HStack(spacing: 11) {
+            PouchMark()
+                .frame(width: Metrics.logoSize, height: Metrics.logoSize)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("AGENT FANNY PACK")
+                    .font(.system(size: 16.5, weight: .heavy))
+                    .tracking(0.2)
+                    .foregroundStyle(Palette.title)
+                Text("All your agent accounts. Always ready.")
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(Palette.subtitle)
             }
-            .padding(.horizontal, 17)
-            .padding(.top, 14)
-            .padding(.bottom, 11)
-
-            ZipperLine()
-                .frame(height: 16)
+            Spacer(minLength: 6)
+            Menu {
+                Toggle(
+                    "Show 5-hour and other quota windows",
+                    isOn: Binding(get: { model.showAllQuotaWindows }, set: model.setShowAllQuotaWindows)
+                )
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(Palette.glyph)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Settings")
+            Image(systemName: "chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Palette.glyph)
                 .accessibilityHidden(true)
         }
-        .background(PouchPalette.header(for: colorScheme))
+        .padding(.horizontal, Metrics.gutter + 2)
+        .padding(.top, Metrics.headerTop)
+        .padding(.bottom, Metrics.headerBottom)
     }
 }
 
-private struct ZipperLine: View {
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.18))
-                    .frame(height: 3)
-                    .padding(.horizontal, 12)
-                HStack(spacing: 5) {
-                    ForEach(0..<29, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.primary.opacity(0.38))
-                            .frame(width: 8, height: 5)
-                    }
-                }
-                .padding(.leading, 16)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(PouchPalette.accent)
-                    .frame(width: 24, height: 11)
-                    .overlay(
-                        Capsule().stroke(Color.white.opacity(0.7), lineWidth: 1).padding(3)
-                    )
-                    .offset(x: geometry.size.width * 0.64)
-            }
-        }
-    }
-}
-
+/// The pouch mark: a rounded bag with a strap arch, side gussets, and a zipper pull.
 private struct PouchMark: View {
     var body: some View {
-        ZStack {
-            Capsule()
-                .fill(PouchPalette.strap)
-                .frame(height: 10)
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(PouchPalette.accent)
-                .frame(width: 39, height: 30)
-                .overlay(alignment: .top) {
-                    Capsule().fill(Color.white.opacity(0.72)).frame(width: 25, height: 2).padding(.top, 7)
+        GeometryReader { geometry in
+            let size = min(geometry.size.width, geometry.size.height)
+            ZStack {
+                // Side gussets peeking out behind the body.
+                HStack(spacing: size * 0.44) {
+                    Circle().fill(Palette.pouchDark).frame(width: size * 0.30, height: size * 0.40)
+                    Circle().fill(Palette.pouchDark).frame(width: size * 0.30, height: size * 0.40)
                 }
-            Circle()
-                .fill(PouchPalette.ink)
-                .frame(width: 5, height: 5)
-                .offset(x: 13, y: -7)
+                .offset(y: size * 0.06)
+                // Strap arch over the top.
+                RoundedRectangle(cornerRadius: size * 0.10, style: .continuous)
+                    .stroke(Palette.pouchStrap, lineWidth: size * 0.075)
+                    .frame(width: size * 0.60, height: size * 0.42)
+                    .offset(y: -size * 0.20)
+                // Main body.
+                RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Palette.pouchLight, Palette.pouchBody],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: size * 0.80, height: size * 0.62)
+                    .offset(y: size * 0.10)
+                // Zipper track and pull.
+                Capsule()
+                    .fill(Palette.pouchZip)
+                    .frame(width: size * 0.42, height: size * 0.045)
+                    .offset(x: -size * 0.04, y: -size * 0.02)
+                Circle()
+                    .fill(Palette.pouchDark)
+                    .frame(width: size * 0.10, height: size * 0.10)
+                    .offset(x: size * 0.20, y: -size * 0.02)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }
 }
+
+// MARK: - Summary
+
+private struct SummaryCard: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            SummaryCell(
+                dot: Palette.good,
+                title: "Connected accounts",
+                value: "\(model.connectedAccountCount)"
+            )
+            Divider().frame(height: 40).overlay(Palette.hairline)
+            SummaryCell(
+                dot: Palette.good,
+                title: "Active providers",
+                value: "\(model.activeProviderCount)",
+                suffix: " / \(model.providerCount)"
+            )
+            Divider().frame(height: 40).overlay(Palette.hairline)
+            SummaryCell(
+                icon: "clock",
+                title: "Next reset",
+                value: model.nextReset.map {
+                    QuotaFormatting.compactCountdown(to: $0, now: model.referenceDate, includeMinutes: true)
+                } ?? "—",
+                caption: model.nextReset.map { QuotaFormatting.compactAbsoluteReset($0) }
+            )
+        }
+        .padding(.vertical, Metrics.summaryVPad)
+        .background(Palette.panel, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                .stroke(Palette.hairline, lineWidth: 1)
+        }
+    }
+}
+
+private struct SummaryCell: View {
+    var dot: Color?
+    var icon: String?
+    let title: String
+    let value: String
+    var suffix: String?
+    var caption: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                if let dot {
+                    Circle().fill(dot).frame(width: 6, height: 6)
+                } else if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10.5, weight: .regular))
+                        .foregroundStyle(Palette.subtitle)
+                }
+                Text(title)
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(Palette.subtitle)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text(value)
+                    .font(.system(size: caption == nil ? 23 : 15, weight: .bold))
+                    .foregroundStyle(Palette.title)
+                if let suffix {
+                    Text(suffix)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Palette.subtitle)
+                }
+            }
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.subtitle)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 11)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Filter bar
+
+private struct FilterBar: View {
+    @Binding var filter: AccountFilter
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 0) {
+                ForEach(AccountFilter.allCases) { option in
+                    Button {
+                        filter = option
+                    } label: {
+                        Text(option.rawValue)
+                            .font(.system(size: 12.5, weight: filter == option ? .semibold : .regular))
+                            .foregroundStyle(filter == option ? Palette.title : Palette.subtitle)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Metrics.tabVPad)
+                            .background {
+                                if filter == option {
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(Palette.panel)
+                                        .shadow(color: .black.opacity(0.06), radius: 1.5, y: 1)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(filter == option ? [.isSelected] : [])
+                }
+            }
+            .padding(2)
+            .background(Palette.track, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.hairline, lineWidth: 1)
+            }
+
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Palette.glyph)
+                .frame(width: 36, height: 30)
+                .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.hairline, lineWidth: 1)
+                }
+                .accessibilityLabel("Display options")
+        }
+    }
+}
+
+// MARK: - Provider section
 
 private struct ProviderSection: View {
     let surface: ProviderSurface
@@ -204,305 +338,359 @@ private struct ProviderSection: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 7) {
+        VStack(spacing: 0) {
+            HStack(spacing: 9) {
                 ProviderBadge(surface: surface)
                 Text(surface.displayName)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                Spacer()
-                Text(countLabel)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Palette.title)
+                Spacer(minLength: 8)
+                // The design's average-remaining dropdown was dropped; the connected
+                // count takes the trailing slot instead.
+                HStack(spacing: 6) {
+                    Text(countLabel)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.subtitle)
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 7, height: 7)
+                }
             }
-            .accessibilityElement(children: .combine)
+            .padding(.horizontal, 12)
+            .frame(height: Metrics.sectionHeaderHeight)
 
             ForEach(profiles) { profile in
-                AccountCard(
+                Divider().overlay(Palette.hairline)
+                AccountRow(
                     profile: profile,
                     snapshot: model.snapshot(for: profile),
                     isActive: model.isActive(profile),
+                    referenceDate: model.referenceDate,
                     showAllQuotaWindows: model.showAllQuotaWindows,
                     switchAction: { model.requestSwitch(profile) }
                 )
             }
         }
+        .background(Palette.panel, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                .stroke(Palette.hairline, lineWidth: 1)
+        }
     }
 
+    private var connectedCount: Int { profiles.filter(\.connected).count }
+
     private var countLabel: String {
-        let connected = profiles.filter(\.connected).count
-        if surface == .cursor { return "DEFERRED" }
-        return connected == 1 ? "1 CONNECTED" : "\(connected) CONNECTED"
+        if surface == .cursor { return "\(profiles.count) configured" }
+        return "\(connectedCount) connected"
+    }
+
+    private var statusColor: Color {
+        switch surface {
+        case .cursor: return Palette.muted
+        case .codexMacApp: return Palette.warn
+        default: return connectedCount > 0 ? Palette.good : Palette.muted
+        }
     }
 }
 
 private struct ProviderBadge: View {
     let surface: ProviderSurface
+
     var body: some View {
         Image(systemName: icon)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(color)
-            .frame(width: 23, height: 23)
-            .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 7))
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(tint)
+            .frame(width: 26, height: 26)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .accessibilityHidden(true)
     }
 
     private var icon: String {
         switch surface {
-        case .codexCLI: return "terminal.fill"
+        case .codexCLI: return "chevron.left.forwardslash.chevron.right"
         case .codexMacApp: return "macwindow"
-        case .claudeCode: return "sparkles"
+        case .claudeCode: return "sparkle"
         case .cursor: return "cursorarrow.rays"
         }
     }
 
-    private var color: Color {
+    private var tint: Color {
         switch surface {
-        case .codexCLI: return Color(red: 0.08, green: 0.52, blue: 0.42)
-        case .codexMacApp: return Color(red: 0.25, green: 0.42, blue: 0.78)
-        case .claudeCode: return Color(red: 0.72, green: 0.34, blue: 0.19)
-        case .cursor: return Color(red: 0.45, green: 0.43, blue: 0.52)
+        case .codexCLI: return Palette.good
+        case .codexMacApp: return Color(red: 0.29, green: 0.45, blue: 0.85)
+        case .claudeCode: return Color(red: 0.85, green: 0.42, blue: 0.22)
+        case .cursor: return Palette.title
         }
     }
 }
 
-private struct AccountCard: View {
+// MARK: - Account row
+
+private struct AccountRow: View {
     let profile: AccountProfile
     let snapshot: QuotaSnapshot?
     let isActive: Bool
+    let referenceDate: Date
     let showAllQuotaWindows: Bool
     let switchAction: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(profile.label)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                    Text(profile.identity ?? identityFallback)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 4) {
-                    if isActive { AnimatedActiveBadge() }
-                    if shouldShowAction { actionButton }
-                }
-            }
+        HStack(spacing: 0) {
+            selector
+                .frame(width: Metrics.colSelector)
 
-            if let snapshot {
-                let windows = snapshot.displayWindows(showAll: showAllQuotaWindows)
-                if windows.isEmpty {
-                    compactUnavailable
-                } else {
-                    ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
-                        CompactQuotaRow(
-                            window: window,
-                            health: index == 0 ? QuotaFormatting.health(for: snapshot) : nil,
-                            age: index == 0 ? QuotaFormatting.age(snapshot.fetchedAt) : nil
-                        )
-                    }
-                }
-            } else {
-                compactUnavailable
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.title)
+                Text(profile.identity ?? (profile.connected ? "Connected account" : "Not connected"))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.subtitle)
+                    .lineLimit(1)
             }
+            .frame(width: Metrics.colName, alignment: .leading)
+
+            quotaColumn.frame(width: Metrics.colQuota, alignment: .leading)
+            resetColumn.frame(width: Metrics.colReset, alignment: .leading)
+            healthColumn.frame(width: Metrics.colHealth, alignment: .leading)
+
+            Spacer(minLength: 0)
+            action
+                .padding(.trailing, Metrics.rowTrailing)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 8)
-        .background(PouchPalette.card(for: colorScheme), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(colorScheme == .dark ? 0.15 : 0.08), lineWidth: 1)
+        .frame(height: Metrics.rowHeight)
+        .background {
+            if showsActive {
+                RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous)
+                    .fill(Palette.activeFill)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous)
+                            .stroke(Palette.good, lineWidth: 1.5)
+                    }
+                    .padding(.horizontal, 1)
+            }
         }
         .accessibilityElement(children: .contain)
     }
 
-    private var shouldShowAction: Bool {
-        profile.switchCapability == .unsupported ||
-            profile.switchCapability == .guidedOnly ||
-            !profile.connected ||
-            !isActive
+    private var window: QuotaWindow? {
+        snapshot?.displayWindows(showAll: showAllQuotaWindows).first
     }
 
-    @ViewBuilder private var actionButton: some View {
-        if profile.switchCapability == .unsupported {
-            StatusPill(text: "ROADMAP", icon: "road.lanes", tint: .secondary)
+    /// Guided-only surfaces never wear the active treatment: the app cannot confirm
+    /// that switch, so claiming it in the UI would be a lie.
+    private var showsActive: Bool { isActive && profile.switchCapability == .isolatedProfile }
+
+    @ViewBuilder private var selector: some View {
+        if showsActive {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(Palette.good)
+                .accessibilityLabel("Active account")
         } else {
-            Button(actionLabel, action: switchAction)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel(actionAccessibilityLabel)
+            Circle()
+                .stroke(Palette.selectorRing, lineWidth: 1.5)
+                .frame(width: 16, height: 16)
+                .accessibilityLabel("Inactive account")
         }
     }
 
-    private var compactUnavailable: some View {
-        HStack(spacing: 6) {
-            HealthDot(health: profile.switchCapability == .unsupported ? .unsupported : .unavailable)
-            Text(profile.lastError ?? "No authoritative quota snapshot yet.")
-                .lineLimit(1)
+    @ViewBuilder private var quotaColumn: some View {
+        if let window {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text("\(Int(window.remainingPercent.rounded()))%")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Palette.title)
+                    Text("left")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.subtitle)
+                }
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Palette.track).frame(height: 5)
+                    Capsule()
+                        .fill(barColor(window.remainingPercent))
+                        .frame(width: max(4, 58 * window.remainingPercent / 100), height: 5)
+                }
+                .frame(width: 58)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("—").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.subtitle)
+                Text("No quota").font(.system(size: 11)).foregroundStyle(Palette.subtitle)
+            }
         }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .help(profile.lastError ?? "No authoritative quota snapshot yet.")
+    }
+
+    @ViewBuilder private var resetColumn: some View {
+        if let window {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(QuotaFormatting.compactCountdown(to: window.resetsAt, now: referenceDate))
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Palette.title)
+                Text(QuotaFormatting.compactAbsoluteReset(window.resetsAt))
+                    .font(.system(size: 10))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(Palette.subtitle)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("—").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.subtitle)
+                Text("No reset").font(.system(size: 11)).foregroundStyle(Palette.subtitle)
+            }
+        }
+    }
+
+    private var healthColumn: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Circle().fill(healthTint).frame(width: 6, height: 6)
+                Text(healthLabel)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(healthTint == Palette.good ? Palette.good : Palette.subtitle)
+            }
+            if snapshot != nil {
+                Text(QuotaFormatting.age(snapshot?.fetchedAt ?? referenceDate, now: referenceDate))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.subtitle)
+            }
+        }
+    }
+
+    private var healthLabel: String {
+        if profile.switchCapability == .unsupported { return "Deferred" }
+        if snapshot == nil { return "Needs login" }
+        return QuotaFormatting.health(for: snapshot, now: referenceDate).label
+    }
+
+    private var healthTint: Color {
+        if profile.switchCapability == .unsupported { return Palette.muted }
+        if snapshot == nil { return Palette.warn }
+        return QuotaFormatting.health(for: snapshot, now: referenceDate) == .fresh ? Palette.good : Palette.warn
+    }
+
+    @ViewBuilder private var action: some View {
+        if showsActive {
+            HStack(spacing: 5) {
+                Text("Active")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Palette.good)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Palette.good)
+            }
+            .frame(width: Metrics.colAction, height: 26)
+            .background(Palette.panel, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Palette.good.opacity(0.45), lineWidth: 1)
+            }
+        } else {
+            Button(action: switchAction) {
+                Text(actionLabel)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Palette.title)
+                    .frame(width: Metrics.colAction, height: 26)
+                    .background(Palette.panel, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Palette.hairline, lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(actionAccessibilityLabel)
+        }
     }
 
     private var actionLabel: String {
+        if profile.switchCapability == .unsupported { return "Enable" }
         if profile.switchCapability == .guidedOnly { return "Guide" }
         return profile.connected ? "Switch" : "Connect"
     }
 
     private var actionAccessibilityLabel: String {
+        if profile.switchCapability == .unsupported { return "Cursor support is deferred" }
         if profile.switchCapability == .guidedOnly { return "Open guided switch for \(profile.label)" }
         if !profile.connected { return "Connect \(profile.label)" }
         return "Switch launcher to \(profile.label)"
     }
 
-    private var identityFallback: String {
-        profile.connected ? "Connected account" : "Not connected"
+    private func barColor(_ remaining: Double) -> Color {
+        if remaining < 20 { return Palette.bad }
+        if remaining < 40 { return Palette.warn }
+        return Palette.good
     }
 }
 
-private struct CompactQuotaRow: View {
-    let window: QuotaWindow
-    let health: SourceHealth?
-    let age: String?
+// MARK: - Footer
+
+private struct FooterBar: View {
+    @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(window.label)
-                    .font(.caption.weight(.semibold))
-                Text(QuotaFormatting.percentRemaining(window.remainingPercent))
-                    .font(.caption2.weight(.bold))
-                Spacer(minLength: 6)
-                if let health, let age {
-                    HealthDot(health: health)
-                    Text("· \(age)")
-                        .foregroundStyle(.secondary)
+        HStack(spacing: 9) {
+            Button(action: model.refresh) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Palette.glyph)
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isRefreshing)
+            .keyboardShortcut("r", modifiers: .command)
+            .accessibilityLabel("Refresh accounts")
+
+            Text(model.lastUpdated.map { "Updated \(QuotaFormatting.age($0, now: model.referenceDate))" } ?? "Not refreshed yet")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.subtitle)
+
+            Spacer(minLength: 8)
+
+            Button(action: model.launchActiveProfile) {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.fill").font(.system(size: 11))
+                    Text("Launch with active profile").font(.system(size: 12.5, weight: .semibold))
                 }
-                Text("\(QuotaFormatting.countdown(to: window.resetsAt)) · \(QuotaFormatting.compactAbsoluteReset(window.resetsAt))")
-                    .foregroundStyle(.secondary)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .frame(height: 32)
+                .background(Palette.good, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
-            .font(.caption2)
-            .lineLimit(1)
-            .minimumScaleFactor(0.78)
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.10))
-                    Capsule()
-                        .fill(barColor)
-                        .frame(width: max(4, geometry.size.width * window.remainingPercent / 100))
-                }
+            .buttonStyle(.plain)
+
+            Menu {
+                Button("Refresh", action: model.refresh)
+                Toggle(
+                    "Show 5-hour and other quota windows",
+                    isOn: Binding(get: { model.showAllQuotaWindows }, set: model.setShowAllQuotaWindows)
+                )
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.glyph)
             }
-            .frame(height: 6)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.label) quota")
-        .accessibilityValue("\(QuotaFormatting.percentRemaining(window.remainingPercent)); \(QuotaFormatting.countdown(to: window.resetsAt)); \(QuotaFormatting.absoluteReset(window.resetsAt))")
-    }
-
-    private var barColor: Color {
-        if window.remainingPercent < 20 { return PouchPalette.danger }
-        if window.remainingPercent < 40 { return PouchPalette.warning }
-        return PouchPalette.success
-    }
-}
-
-private struct AnimatedActiveBadge: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
-    private let pulseTimer = Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ZStack {
-                Circle()
-                    .stroke(PouchPalette.success.opacity(0.42), lineWidth: 1.5)
-                    .frame(width: 9, height: 9)
-                    .scaleEffect(pulsing ? 1.7 : 1)
-                    .opacity(pulsing ? 0 : 0.8)
-                Circle()
-                    .fill(PouchPalette.success)
-                    .frame(width: 7, height: 7)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .frame(width: 36, height: 32)
+            .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.hairline, lineWidth: 1)
             }
-            Text("ACTIVE")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+            .accessibilityLabel("More actions")
         }
-        .foregroundStyle(PouchPalette.success)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(PouchPalette.success.opacity(0.13), in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Active account")
-        .onAppear(perform: triggerPulse)
-        .onReceive(pulseTimer) { _ in triggerPulse() }
-        .onChange(of: reduceMotion) { reduced in
-            if reduced { pulsing = false }
-        }
-    }
-
-    private func triggerPulse() {
-        guard !reduceMotion, !pulsing else { return }
-        withAnimation(.easeOut(duration: 0.65)) { pulsing = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            pulsing = false
-        }
-    }
-}
-
-private struct HealthDot: View {
-    let health: SourceHealth
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-            Text(health.label)
-        }
-        .foregroundStyle(color)
-        .accessibilityElement(children: .combine)
-    }
-    private var icon: String {
-        switch health {
-        case .fresh: return "checkmark.circle.fill"
-        case .stale: return "clock.badge.exclamationmark"
-        case .offline: return "wifi.slash"
-        case .error: return "exclamationmark.triangle.fill"
-        case .unavailable: return "questionmark.circle"
-        case .unsupported: return "nosign"
-        }
-    }
-    private var color: Color {
-        switch health {
-        case .fresh: return PouchPalette.success
-        case .stale: return PouchPalette.warning
-        case .offline, .error: return PouchPalette.danger
-        case .unavailable, .unsupported: return .secondary
-        }
-    }
-}
-
-private struct StatusPill: View {
-    let text: String
-    let icon: String
-    let tint: Color
-    var body: some View {
-        Label(text, systemImage: icon)
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(tint.opacity(0.13), in: Capsule())
-            .accessibilityElement(children: .combine)
+        .padding(.horizontal, Metrics.gutter + 2)
+        .padding(.vertical, Metrics.footerVPad)
+        .background(Palette.footer)
+        .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
     }
 }
 
 private struct NoticeToast: View {
     let text: String
     let dismiss: () -> Void
+
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(PouchPalette.success)
+            Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.good)
             Text(text)
                 .font(.caption.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
@@ -512,45 +700,45 @@ private struct NoticeToast: View {
                 .accessibilityLabel("Dismiss notice")
         }
         .padding(10)
-        .frame(maxWidth: 400)
+        .frame(maxWidth: 380)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
     }
 }
 
-enum PouchPalette {
-    static let accent = Color(red: 0.91, green: 0.36, blue: 0.17)
-    static let strap = Color(red: 0.19, green: 0.25, blue: 0.27)
-    static let ink = Color(red: 0.10, green: 0.13, blue: 0.14)
-    static let success = dynamicColor(
-        light: NSColor(calibratedRed: 0.05, green: 0.48, blue: 0.34, alpha: 1),
-        dark: NSColor(calibratedRed: 0.24, green: 0.84, blue: 0.62, alpha: 1)
-    )
-    static let warning = dynamicColor(
-        light: NSColor(calibratedRed: 0.72, green: 0.40, blue: 0.02, alpha: 1),
-        dark: NSColor(calibratedRed: 1.00, green: 0.68, blue: 0.22, alpha: 1)
-    )
-    static let danger = dynamicColor(
-        light: NSColor(calibratedRed: 0.72, green: 0.16, blue: 0.18, alpha: 1),
-        dark: NSColor(calibratedRed: 1.00, green: 0.45, blue: 0.48, alpha: 1)
-    )
+// MARK: - Palette
 
-    static func background(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.09, green: 0.10, blue: 0.11) : Color(red: 0.96, green: 0.94, blue: 0.89)
-    }
-    static func header(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.14, green: 0.15, blue: 0.16) : Color(red: 0.91, green: 0.84, blue: 0.70)
-    }
-    static func footer(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.12, green: 0.13, blue: 0.14) : Color(red: 0.91, green: 0.89, blue: 0.84)
-    }
-    static func card(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.15, green: 0.16, blue: 0.17) : Color.white.opacity(0.88)
+enum Palette {
+    // Sampled directly from the approved design reference rather than guessed. The
+    // design is deliberately low-contrast: panels sit only a few levels above the
+    // canvas, separated by hairlines rather than by fill.
+    static let good = rgb(58, 132, 100)
+    static let warn = rgb(214, 152, 47)
+    static let bad = rgb(198, 58, 48)
+    static let muted = rgb(158, 156, 150)
+
+    static let title = rgb(32, 31, 29)
+    static let subtitle = rgb(122, 119, 113)
+    static let glyph = rgb(104, 101, 96)
+
+    static let panel = rgb(250, 250, 248)
+    static let track = rgb(232, 230, 226)
+    static let hairline = rgb(233, 231, 227)
+    static let footer = rgb(247, 244, 240)
+    static let activeFill = rgb(250, 252, 250)
+    static let selectorRing = rgb(203, 201, 196)
+
+    static let pouchBody = rgb(196, 90, 48)
+    static let pouchLight = rgb(214, 108, 64)
+    static let pouchDark = rgb(44, 42, 41)
+    static let pouchStrap = rgb(228, 164, 74)
+    static let pouchZip = rgb(246, 243, 239)
+
+    static func canvas(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? rgb(28, 28, 30) : rgb(247, 245, 241)
     }
 
-    private static func dynamicColor(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        })
+    private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color {
+        Color(red: r / 255, green: g / 255, blue: b / 255)
     }
 }

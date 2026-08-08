@@ -19,7 +19,7 @@ final class AppModel: ObservableObject {
         self.store = store
         self.showAllQuotaWindows = preview ? false : UserDefaults.standard.bool(forKey: "showAllQuotaWindows")
         if preview {
-            self.state = PreviewData.state(now: Date())
+            self.state = PreviewData.state(now: PreviewData.pinnedNow)
         } else {
             var loaded = (try? store.load()) ?? PersistedState()
             Self.mergeDefaultProfiles(into: &loaded)
@@ -28,9 +28,93 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Everything time-relative renders against this instant. Synthetic previews pin it so
+    /// documentation screenshots and the design-QA comparison are reproducible.
+    var referenceDate: Date { isPreview ? PreviewData.pinnedNow : Date() }
+
     var groupedProfiles: [(ProviderSurface, [AccountProfile])] {
         ProviderSurface.allCases.map { surface in
             (surface, state.profiles.filter { $0.surface == surface })
+        }
+    }
+
+    func profiles(for surface: ProviderSurface, filter: AccountFilter) -> [AccountProfile] {
+        state.profiles.filter { $0.surface == surface && matches($0, filter: filter) }
+    }
+
+    func matches(_ profile: AccountProfile, filter: AccountFilter) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .active:
+            return isActive(profile)
+        case .needsAttention:
+            return !profile.connected
+                || profile.switchCapability == .unsupported
+                || profile.switchCapability == .guidedOnly
+                || QuotaFormatting.health(for: snapshot(for: profile), now: referenceDate) != .fresh
+        }
+    }
+
+    var connectedAccountCount: Int {
+        state.profiles.filter(\.connected).count
+    }
+
+    var activeProviderCount: Int {
+        ProviderSurface.allCases.filter { surface in
+            guard let id = state.activeProfileID(for: surface) else { return false }
+            return state.profiles.contains { $0.id == id && $0.connected }
+        }.count
+    }
+
+    var providerCount: Int { ProviderSurface.allCases.count }
+
+    /// The soonest reset across every window the app currently holds.
+    var nextReset: Date? {
+        state.snapshots
+            .flatMap { $0.displayWindows(showAll: showAllQuotaWindows) }
+            .map(\.resetsAt)
+            .filter { $0 > referenceDate }
+            .min()
+    }
+
+    var lastUpdated: Date? {
+        state.snapshots.map(\.fetchedAt).max()
+    }
+
+    /// Average remaining percentage across a surface's primary display window.
+    func averageRemaining(for surface: ProviderSurface) -> Double? {
+        let values = state.profiles
+            .filter { $0.surface == surface && $0.connected }
+            .compactMap { snapshot(for: $0)?.displayWindows(showAll: false).first?.remainingPercent }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    func launchActiveProfile() {
+        guard let surface = ProviderSurface.allCases.first(where: { surface in
+            guard let id = state.activeProfileID(for: surface),
+                  let profile = state.profiles.first(where: { $0.id == id }) else { return false }
+            return profile.switchCapability == .isolatedProfile && profile.connected
+        }), let id = state.activeProfileID(for: surface),
+           let profile = state.profiles.first(where: { $0.id == id }) else {
+            notice = "No launchable active profile. Connect a Codex CLI or Claude Code account first."
+            return
+        }
+        guard !isPreview else {
+            notice = "Synthetic preview: no session is launched."
+            return
+        }
+        do {
+            let spec = try Switching.command(for: profile, passthrough: [])
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: spec.executable)
+            process.arguments = spec.arguments
+            process.environment = ProcessInfo.processInfo.environment.merging(spec.environment) { _, new in new }
+            try process.run()
+            notice = "Launched \(profile.label). Running sessions were not touched."
+        } catch {
+            notice = Redactor.text(error.localizedDescription)
         }
     }
 
@@ -191,6 +275,30 @@ final class AppModel: ObservableObject {
 }
 
 enum PreviewData {
+    /// Synthetic previews and the design-QA render must be byte-identical between runs,
+    /// so the fixture is pinned to a fixed instant rather than the wall clock.
+    static let pinnedNow: Date = {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 10
+        components.hour = 23
+        components.minute = 6
+        return Calendar.current.date(from: components) ?? Date(timeIntervalSince1970: 1_786_000_000)
+    }()
+
+    /// The weekly window resets on a wall-clock boundary, which is what produces the
+    /// "3d 6h 54m · Aug 14, 6:00 AM" pairing in the approved design.
+    static let pinnedWeeklyReset: Date = {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 14
+        components.hour = 6
+        components.minute = 0
+        return Calendar.current.date(from: components) ?? pinnedNow.addingTimeInterval(3 * 86_400)
+    }()
+
     static func state(now: Date) -> PersistedState {
         let profiles = [
             AccountProfile(id: "codex-weekend", surface: .codexCLI, label: "Weekend Build", identity: "dev@sample.test", configurationHome: "/tmp/demo-codex-a", switchCapability: .isolatedProfile, connected: true),
@@ -198,7 +306,7 @@ enum PreviewData {
             AccountProfile(id: "codex-app", surface: .codexMacApp, label: "Desktop Session", identity: "maker@sample.test", switchCapability: .guidedOnly, connected: true, lastError: "App-owned session · guided sign-out/sign-in only."),
             AccountProfile(id: "claude-side", surface: .claudeCode, label: "Side Project", identity: "builder@sample.test", configurationHome: "/tmp/demo-claude-a", switchCapability: .isolatedProfile, connected: true),
             AccountProfile(id: "claude-lab", surface: .claudeCode, label: "Research Lab", identity: "lab@sample.test", configurationHome: "/tmp/demo-claude-b", switchCapability: .isolatedProfile, connected: true),
-            AccountProfile(id: "cursor-deferred", surface: .cursor, label: "Cursor integration", switchCapability: .unsupported, lastError: "Deferred — safe personal quota and profile switching are not documented."),
+            AccountProfile(id: "cursor-deferred", surface: .cursor, label: "Personal Workspace", identity: "me@sample.test", switchCapability: .unsupported, lastError: "Deferred — safe personal quota and profile switching are not documented."),
         ]
         let values: [(String, QuotaSource, Double, Double?)] = [
             ("codex-weekend", .codexAppServer, 26, 42),
@@ -211,7 +319,7 @@ enum PreviewData {
                 profileID: profileID,
                 windows: [
                     QuotaWindow(id: "\(profileID)-primary", label: source == .claudeStatusLine ? "5h" : "Session", usedPercent: primary, resetsAt: now.addingTimeInterval(2 * 3600 + 26 * 60)),
-                    QuotaWindow(id: "\(profileID)-secondary", label: source == .claudeStatusLine ? "7d" : "Weekly", usedPercent: secondary ?? 0, resetsAt: now.addingTimeInterval(3 * 86_400 + 7 * 3600)),
+                    QuotaWindow(id: "\(profileID)-secondary", label: source == .claudeStatusLine ? "7d" : "Weekly", usedPercent: secondary ?? 0, resetsAt: pinnedWeeklyReset),
                 ],
                 fetchedAt: now.addingTimeInterval(-94),
                 source: .syntheticPreview
