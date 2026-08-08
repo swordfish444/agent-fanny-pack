@@ -158,18 +158,16 @@ final class AppModel: ObservableObject {
                 self.notice = "Synthetic preview: Codex is not opened."
                 return
             }
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else {
-                self.notice = "The Codex desktop app is not installed."
-                return
-            }
-            // Already signed in: adopt it now rather than sending the user somewhere pointless.
+            // A live session is just a directory: adopt it, no sign-out, no browser.
             if let adopted = self.adoptExistingSession(for: .codexMacApp) {
                 self.notice = "Connected the Codex session already signed in at \(adopted). No sign-out needed."
                 return
             }
-            self.awaitingConnection.insert(.codexMacApp)
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
-            self.notice = "Sign in inside Codex; this fills in when you reopen the pouch." 
+            // Nothing left to adopt. Opening the app cannot add an account for us -- a new
+            // Codex account means a new CODEX_HOME, which is exactly the CLI login flow, so
+            // run that visibly rather than dumping the user in an app with nothing to do.
+            self.notice = "No unused Codex session found. Starting a new sign-in."
+            self.addProfile(to: .codexCLI)
         }
     }
 

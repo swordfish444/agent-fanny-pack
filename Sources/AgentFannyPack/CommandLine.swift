@@ -24,11 +24,18 @@ enum CommandLineMode {
                 return try profileCommand(arguments: arguments)
             case "run":
                 return try runActive(arguments: arguments)
+            case "connect":
+                return try connectCommand(arguments: arguments)
             case "doctor":
                 print("Codex CLI: isolated profiles + first-party app-server quota")
                 print("Claude Code: isolated profiles + first-party status-line quota")
                 print("Codex macOS: guided switch only")
                 print("Cursor: deferred; no supported personal quota/profile contract")
+                let discovery = ProfileDiscovery()
+                for surface in [ProviderSurface.codexCLI, .claudeCode, .codexMacApp] {
+                    let found = discovery.existingSessions(for: surface).map(\.lastPathComponent)
+                    print("Sessions visible for \(surface.displayName): \(found.isEmpty ? "none" : found.joined(separator: ", "))")
+                }
                 return 0
             case "--help", "help":
                 return usage(nil)
@@ -58,6 +65,23 @@ enum CommandLineMode {
         print(String(data: data, encoding: .utf8)!)
         controller.popover.performClose(nil)
         return (result["statusItem"] as? Bool == true && result["popoverShown"] as? Bool == true) ? 0 : 1
+    }
+
+    /// Same adoption path the popover's Connect uses, exposed so it can be exercised and
+    /// diagnosed without clicking.
+    @MainActor
+    private static func connectCommand(arguments: [String]) throws -> Int32 {
+        guard arguments.count >= 3, let surface = ProviderSurface(rawValue: arguments[2]) else {
+            return usage("connect requires codex-cli, claude-code, or codex-macos")
+        }
+        let model = AppModel()
+        if let adopted = model.adoptExistingSession(for: surface) {
+            print("Connected the \(surface.displayName) session at \(adopted). No login needed.")
+            return 0
+        }
+        let seen = ProfileDiscovery().existingSessions(for: surface).map(\.lastPathComponent)
+        print("No unclaimed \(surface.displayName) session to adopt. Visible: \(seen.isEmpty ? "none" : seen.joined(separator: ", "))")
+        return 1
     }
 
     private static func ingestClaude(arguments: [String]) throws -> Int32 {
