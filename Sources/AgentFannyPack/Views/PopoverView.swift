@@ -79,25 +79,27 @@ struct PopoverView: View {
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.bottom, Metrics.blockGap)
             }
-            .alert(item: $model.pendingDelete) { profile in
-                Alert(
+            FooterBar(model: model)
+        }
+        .frame(width: Metrics.width, height: Metrics.height)
+        .background(Palette.canvas(colorScheme))
+        .alert(item: $model.pendingPrompt) { prompt in
+            switch prompt {
+            case .switchProfile(let profile):
+                return Alert(
+                    title: Text(alertTitle(for: profile)),
+                    message: Text(switchMessage(for: profile)),
+                    primaryButton: .default(Text(actionTitle(for: profile)), action: model.confirmSwitch),
+                    secondaryButton: .cancel()
+                )
+            case .removeProfile(let profile):
+                return Alert(
                     title: Text("Remove \(profile.label)?"),
                     message: Text(model.deleteMessage(for: profile)),
                     primaryButton: .destructive(Text("Remove"), action: model.confirmDelete),
                     secondaryButton: .cancel()
                 )
             }
-            FooterBar(model: model)
-        }
-        .frame(width: Metrics.width, height: Metrics.height)
-        .background(Palette.canvas(colorScheme))
-        .alert(item: $model.pendingSwitch) { profile in
-            Alert(
-                title: Text(alertTitle(for: profile)),
-                message: Text(switchMessage(for: profile)),
-                primaryButton: .default(Text(actionTitle(for: profile)), action: model.confirmSwitch),
-                secondaryButton: .cancel()
-            )
         }
         .overlay(alignment: .bottom) {
             if let notice = model.notice {
@@ -394,10 +396,12 @@ private struct ProviderSection: View {
                 )
             }
 
-            Divider().overlay(Palette.hairline)
+            if model.canAddProfile(to: surface) || profiles.isEmpty {
+                Divider().overlay(Palette.hairline)
+            }
             if model.canAddProfile(to: surface) {
                 AddAccountRow(surface: surface) { model.addProfile(to: surface) }
-            } else {
+            } else if profiles.isEmpty {
                 EmptySurfaceRow(surface: surface, action: model.guidedAction(for: surface))
             }
         }

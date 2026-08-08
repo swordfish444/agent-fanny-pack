@@ -5,8 +5,25 @@ import AgentFannyPackCore
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var state: PersistedState
-    @Published var pendingSwitch: AccountProfile?
-    @Published var pendingDelete: AccountProfile?
+    @Published var pendingPrompt: PendingPrompt?
+
+    enum PendingPrompt: Identifiable {
+        case switchProfile(AccountProfile)
+        case removeProfile(AccountProfile)
+
+        var id: String {
+            switch self {
+            case .switchProfile(let p): return "switch-\(p.id)"
+            case .removeProfile(let p): return "remove-\(p.id)"
+            }
+        }
+
+        var profile: AccountProfile {
+            switch self {
+            case .switchProfile(let p), .removeProfile(let p): return p
+            }
+        }
+    }
     /// Surfaces the user has asked to connect, awaiting the provider's own sign-in.
     private var awaitingConnection: Set<ProviderSurface> = []
     @Published var isRefreshing = false
@@ -278,12 +295,12 @@ final class AppModel: ObservableObject {
     }
 
     func requestDelete(_ profile: AccountProfile) {
-        pendingDelete = profile
+        pendingPrompt = .removeProfile(profile)
     }
 
     func confirmDelete() {
-        guard let profile = pendingDelete else { return }
-        defer { pendingDelete = nil }
+        guard case .removeProfile(let profile) = pendingPrompt else { return }
+        defer { pendingPrompt = nil }
         state.removeProfile(id: profile.id)
         if !isPreview {
             do { try store.save(state) } catch { notice = Redactor.text(error.localizedDescription); return }
@@ -297,7 +314,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestSwitch(_ profile: AccountProfile) {
-        pendingSwitch = profile
+        pendingPrompt = .switchProfile(profile)
     }
 
     func setShowAllQuotaWindows(_ value: Bool) {
@@ -306,8 +323,8 @@ final class AppModel: ObservableObject {
     }
 
     func confirmSwitch() {
-        guard let profile = pendingSwitch else { return }
-        defer { pendingSwitch = nil }
+        guard case .switchProfile(let profile) = pendingPrompt else { return }
+        defer { pendingPrompt = nil }
         switch profile.switchCapability {
         case .isolatedProfile:
             if !profile.connected {
