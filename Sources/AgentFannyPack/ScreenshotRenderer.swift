@@ -3,8 +3,8 @@ import SwiftUI
 
 @MainActor
 enum ScreenshotRenderer {
-    static func render(to url: URL, dark: Bool, showAllQuotas: Bool = false) throws {
-        let model = AppModel(preview: true)
+    static func render(to url: URL, dark: Bool, showAllQuotas: Bool = false, fixture: String? = nil) throws {
+        let model = fixture.map { AppModel(fixture: $0) } ?? AppModel(preview: true)
         model.setShowAllQuotaWindows(showAllQuotas)
         let appearance: NSAppearance.Name = dark ? .darkAqua : .aqua
         let content = PopoverView(model: model)

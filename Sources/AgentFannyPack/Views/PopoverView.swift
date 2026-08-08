@@ -22,10 +22,10 @@ enum Metrics {
     static let sectionSpacing: CGFloat = 12
 
     static let colSelector: CGFloat = 36
-    static let colName: CGFloat = 140
+    static let colName: CGFloat = 122
     static let colQuota: CGFloat = 74
     static let colReset: CGFloat = 100
-    static let colHealth: CGFloat = 70
+    static let colHealth: CGFloat = 88
     static let colAction: CGFloat = 100
     static let colOverflow: CGFloat = 32
     static let rowTrailing: CGFloat = 0
@@ -503,7 +503,7 @@ private struct EmptySurfaceRow: View {
         case .cursor:
             return "Deferred until Cursor documents safe profile switching"
         case .codexMacApp:
-            return "The Codex app owns its own session"
+            return "Shares the Codex CLI session on this Mac"
         default:
             return "No accounts yet"
         }
@@ -543,6 +543,41 @@ private struct ProviderBadge: View {
 
 // MARK: - Account row
 
+/// What a row actually is, decided once. Previously the status column derived from "has a
+/// quota snapshot" while the button derived from `connected` and the badge from `isActive`,
+/// so a connected account with no usage yet rendered as Active + Connected + Needs login.
+enum RowState {
+    case deferred
+    case signedOut
+    case connectedNoData
+    case reporting(SourceHealth)
+
+    var statusText: String {
+        switch self {
+        case .deferred: return "Deferred"
+        case .signedOut: return "Needs login"
+        case .connectedNoData: return "Connected"
+        case .reporting(let health): return health.label
+        }
+    }
+
+    var detailText: String? {
+        switch self {
+        case .deferred: return "Not supported"
+        case .signedOut: return "Sign in to use"
+        case .connectedNoData: return "No usage yet"
+        case .reporting: return nil
+        }
+    }
+
+    var isSignedIn: Bool {
+        switch self {
+        case .deferred, .signedOut: return false
+        case .connectedNoData, .reporting: return true
+        }
+    }
+}
+
 private struct AccountRow: View {
     let profile: AccountProfile
     let snapshot: QuotaSnapshot?
@@ -564,7 +599,7 @@ private struct AccountRow: View {
                 Text(profile.label)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Palette.title)
-                Text(profile.identity ?? (profile.connected ? "Connected account" : "Not connected"))
+                Text(profile.identity ?? (rowState.isSignedIn ? "Signed in" : "No account yet"))
                     .font(.system(size: 12.5))
                     .foregroundStyle(Palette.subtitle)
                     .lineLimit(1)
@@ -611,9 +646,16 @@ private struct AccountRow: View {
         snapshot?.displayWindows(showAll: showAllQuotaWindows).first
     }
 
-    /// Guided-only surfaces never wear the active treatment: the app cannot confirm
-    /// that switch, so claiming it in the UI would be a lie.
-    private var showsActive: Bool { isActive && profile.switchCapability == .isolatedProfile }
+    private var rowState: RowState {
+        if profile.switchCapability == .unsupported { return .deferred }
+        if !profile.connected { return .signedOut }
+        guard let snapshot else { return .connectedNoData }
+        return .reporting(QuotaFormatting.health(for: snapshot, now: referenceDate))
+    }
+
+    /// Only a signed-in profile can be the active one. An account that needs a login is not
+    /// "Active" no matter what the stored active-profile pointer says.
+    private var showsActive: Bool { isActive && rowState.isSignedIn }
 
     @ViewBuilder private var selector: some View {
         if showsActive {
@@ -679,28 +721,30 @@ private struct AccountRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Circle().fill(healthTint).frame(width: 7, height: 7)
-                Text(healthLabel)
+                Text(rowState.statusText)
                     .font(.system(size: 13, weight: .medium))
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(healthTint == Palette.good ? Palette.good : Palette.subtitle)
             }
-            if snapshot != nil {
-                Text(QuotaFormatting.age(snapshot?.fetchedAt ?? referenceDate, now: referenceDate))
+            if let detail = rowState.detailText {
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.subtitle)
+            } else if let snapshot {
+                Text(QuotaFormatting.age(snapshot.fetchedAt, now: referenceDate))
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.subtitle)
             }
         }
     }
 
-    private var healthLabel: String {
-        if profile.switchCapability == .unsupported { return "Deferred" }
-        if snapshot == nil { return "Needs login" }
-        return QuotaFormatting.health(for: snapshot, now: referenceDate).label
-    }
-
     private var healthTint: Color {
-        if profile.switchCapability == .unsupported { return Palette.muted }
-        if snapshot == nil { return Palette.warn }
-        return QuotaFormatting.health(for: snapshot, now: referenceDate) == .fresh ? Palette.good : Palette.warn
+        switch rowState {
+        case .deferred: return Palette.muted
+        case .signedOut: return Palette.warn
+        case .connectedNoData: return Palette.good
+        case .reporting(let health): return health == .fresh ? Palette.good : Palette.warn
+        }
     }
 
     @ViewBuilder private var action: some View {
@@ -732,9 +776,11 @@ private struct AccountRow: View {
     }
 
     private var actionLabel: String {
-        if profile.switchCapability == .unsupported { return "Enable" }
-        if profile.switchCapability == .guidedOnly { return "Guide" }
-        return profile.connected ? "Switch" : "Connect"
+        switch rowState {
+        case .deferred: return "Enable"
+        case .signedOut: return "Sign in"
+        case .connectedNoData, .reporting: return "Switch"
+        }
     }
 
     private var actionAccessibilityLabel: String {

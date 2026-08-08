@@ -4,7 +4,7 @@ import AgentFannyPackCore
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var state: PersistedState
+    @Published var state: PersistedState
     @Published var pendingPrompt: PendingPrompt?
 
     enum PendingPrompt: Identifiable {
@@ -33,6 +33,12 @@ final class AppModel: ObservableObject {
 
     let isPreview: Bool
     private let store: MetadataStore
+
+    /// Loads a named UI state for rendering and review. Never touches the real store.
+    convenience init(fixture: String) {
+        self.init(preview: true)
+        self.state = StateFixtures.state(fixture)
+    }
 
     init(preview: Bool = false, store: MetadataStore = MetadataStore()) {
         self.isPreview = preview
@@ -86,23 +92,27 @@ final class AppModel: ObservableObject {
     /// the home it took, or nil when every existing session is already accounted for.
     @discardableResult
     func adoptExistingSession(for surface: ProviderSurface) -> String? {
+        // A Codex session is a CODEX_HOME, and the desktop app reads the same one, so it is
+        // filed under Codex CLI. Filing it under the desktop app left the CLI card reading
+        // "0 connected" while the very same account sat in the card below it.
+        let owner: ProviderSurface = surface == .codexMacApp ? .codexCLI : surface
         let registered = Set(state.profiles.compactMap(\.configurationHome))
         let candidates = ProfileDiscovery().existingSessions(for: surface)
         guard let home = candidates.first(where: { !registered.contains($0.path) }) else { return nil }
-        let index = state.profiles.filter { $0.surface == surface }.count + 1
-        let id = "\(surface.rawValue)-session-\(index)"
+        let index = state.profiles.filter { $0.surface == owner }.count + 1
+        let id = "\(owner.rawValue)-session-\(index)"
         let profile = AccountProfile(
             id: id,
-            surface: surface,
+            surface: owner,
             label: home.lastPathComponent == ".codex" || home.lastPathComponent == ".claude"
-                ? surface.displayName
+                ? owner.displayName
                 : home.lastPathComponent,
             configurationHome: home.path,
             switchCapability: .isolatedProfile,
             connected: true
         )
         state.profiles.append(profile)
-        if state.activeProfileID(for: surface) == nil { try? state.setActive(profileID: id) }
+        if state.activeProfileID(for: owner) == nil { try? state.setActive(profileID: id) }
         if !isPreview { try? store.save(state) }
         return home.lastPathComponent
     }
