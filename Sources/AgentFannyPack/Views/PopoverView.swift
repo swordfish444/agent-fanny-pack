@@ -13,7 +13,7 @@ public enum AccountFilter: String, CaseIterable, Identifiable {
 /// by adjusting numbers rather than restructuring the view tree.
 enum Metrics {
     static let width: CGFloat = 539
-    static let height: CGFloat = 647.5
+    static let height: CGFloat = 648
     static let gutter: CGFloat = 12
     static let cardRadius: CGFloat = 11
     static let rowRadius: CGFloat = 9
@@ -59,11 +59,15 @@ struct PopoverView: View {
                 .padding(.bottom, Metrics.blockGap)
             ScrollView {
                 VStack(spacing: Metrics.sectionSpacing) {
-                    ForEach(model.groupedProfiles, id: \.0.id) { surface, _ in
-                        let profiles = model.profiles(for: surface, filter: filter)
-                        if !profiles.isEmpty {
-                            ProviderSection(surface: surface, profiles: profiles, model: model)
-                        }
+                    // Every supported provider is always listed, with or without accounts.
+                    // The section is how you discover the provider exists and how you add
+                    // your first account to it, so an empty one still has to be on screen.
+                    ForEach(ProviderSurface.allCases, id: \.id) { surface in
+                        ProviderSection(
+                            surface: surface,
+                            profiles: model.profiles(for: surface, filter: filter),
+                            model: model
+                        )
                     }
                 }
                 .padding(.horizontal, Metrics.gutter)
@@ -372,12 +376,11 @@ private struct ProviderSection: View {
                 )
             }
 
+            Divider().overlay(Palette.hairline)
             if model.canAddProfile(to: surface) {
-                Divider().overlay(Palette.hairline)
                 AddAccountRow(surface: surface) { model.addProfile(to: surface) }
-            } else if profiles.isEmpty {
-                Divider().overlay(Palette.hairline)
-                EmptySurfaceRow(surface: surface)
+            } else {
+                EmptySurfaceRow(surface: surface, action: model.guidedAction(for: surface))
             }
         }
         .background(Palette.panel, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
@@ -433,24 +436,51 @@ private struct AddAccountRow: View {
     }
 }
 
-/// A surface that cannot take a new account still has to explain itself.
+/// A surface that cannot take an isolated profile still gets a next step where one
+/// exists. Cursor genuinely has none, so it says why rather than offering a dead button.
 private struct EmptySurfaceRow: View {
     let surface: ProviderSurface
+    let action: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 0) {
-            Image(systemName: surface == .cursor ? "clock.badge.questionmark" : "person.crop.circle.badge.questionmark")
+            Image(systemName: surface == .cursor ? "clock.badge.questionmark" : "arrow.up.forward.app")
                 .font(.system(size: 14))
-                .foregroundStyle(Palette.subtitle)
+                .foregroundStyle(surface == .cursor ? Palette.subtitle : Palette.good)
                 .frame(width: Metrics.colSelector)
-            Text(surface == .cursor
-                 ? "Deferred until Cursor documents safe profile switching"
-                 : "Sign in through the Codex app, then refresh")
+            Text(message)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Palette.subtitle)
-            Spacer(minLength: 0)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            if let action {
+                Button(action: action) {
+                    Text("Sign in")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Palette.title)
+                        .frame(width: Metrics.colAction, height: 26)
+                        .background(Palette.panel, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(Palette.hairline, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, Metrics.rowTrailing)
+            }
         }
         .frame(height: 38)
+    }
+
+    private var message: String {
+        switch surface {
+        case .cursor:
+            return "Deferred until Cursor documents safe profile switching"
+        case .codexMacApp:
+            return "The Codex app owns its own session"
+        default:
+            return "No accounts yet"
+        }
     }
 }
 

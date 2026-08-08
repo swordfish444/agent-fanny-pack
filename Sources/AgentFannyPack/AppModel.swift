@@ -62,6 +62,25 @@ final class AppModel: ObservableObject {
 
     /// Creates an isolated profile and hands straight off to the provider's own login.
     /// Agent Fanny Pack never sees a credential; it only owns the directory pointer.
+    /// The Codex desktop app cannot be switched programmatically, but it can be opened
+    /// so the user completes the sign-in themselves. Cursor has no such route.
+    func guidedAction(for surface: ProviderSurface) -> (() -> Void)? {
+        guard surface == .codexMacApp else { return nil }
+        return { [weak self] in
+            guard let self else { return }
+            guard !self.isPreview else {
+                self.notice = "Synthetic preview: Codex is not opened."
+                return
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+                self.notice = "Sign in inside Codex, then refresh here."
+            } else {
+                self.notice = "The Codex desktop app is not installed."
+            }
+        }
+    }
+
     func addProfile(to surface: ProviderSurface) {
         guard canAddProfile(to: surface) else { return }
         guard !isPreview else {

@@ -197,6 +197,23 @@ let tests: [(String, () throws -> Void)] = [
         try expect(snapshot.displayWindows(showAll: false).map(\.label) == ["7d"], "Compact mode did not prefer the weekly window")
         try expect(snapshot.displayWindows(showAll: true) == windows, "Expanded mode did not preserve every quota window")
     }),
+    ("Popover stays on screen", {
+        let screen = CGRect(x: 0, y: 0, width: 2056, height: 1329)
+        // Anchored near the right edge, as a status item at x=1760 would leave it.
+        let overflowing = CGRect(x: 1758, y: 600, width: 539, height: 648)
+        let pulledBack = ScreenPlacement.constrainedOriginX(panel: overflowing, within: screen)
+        try expect(pulledBack + 539 <= 2056 - 8 + 0.001, "Panel still runs off the right edge")
+        try expect(pulledBack == 2056 - 8 - 539, "Panel did not hug the right edge")
+
+        let offLeft = CGRect(x: -120, y: 600, width: 539, height: 648)
+        try expect(ScreenPlacement.constrainedOriginX(panel: offLeft, within: screen) == 8, "Panel did not hug the left edge")
+
+        let comfortable = CGRect(x: 900, y: 600, width: 539, height: 648)
+        try expect(ScreenPlacement.constrainedOriginX(panel: comfortable, within: screen) == 900, "A panel already on screen was moved")
+
+        let tooWide = CGRect(x: 400, y: 0, width: 4000, height: 648)
+        try expect(ScreenPlacement.constrainedOriginX(panel: tooWide, within: screen) == 8, "An oversized panel did not pin to the leading edge")
+    }),
     ("Freshness transitions", {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         func snapshot(age: TimeInterval) -> QuotaSnapshot {

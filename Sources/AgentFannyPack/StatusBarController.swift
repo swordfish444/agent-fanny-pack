@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AgentFannyPackCore
 
 @MainActor
 final class StatusBarController: NSObject, NSPopoverDelegate {
@@ -21,7 +22,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         popover.behavior = .transient
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.contentSize = NSSize(width: 440, height: 690)
+        popover.contentSize = NSSize(width: Metrics.width, height: Metrics.height)
         popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
         popover.delegate = self
 
@@ -81,7 +82,26 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        keepOnScreen()
     }
+
+    func popoverDidShow(_ notification: Notification) {
+        keepOnScreen()
+    }
+
+    /// A status item near the edge of the display leaves AppKit anchoring this panel so it
+    /// runs off the screen and loses its trailing column. Nudging the window back inside
+    /// after it is on screen keeps the whole panel reachable; the arrow then sits off-centre
+    /// from the status item, which is the right trade.
+    private func keepOnScreen() {
+        guard let window = popover.contentViewController?.view.window,
+              let screen = window.screen ?? NSScreen.main else { return }
+        var frame = window.frame
+        frame.origin.x = ScreenPlacement.constrainedOriginX(panel: frame, within: screen.frame)
+        guard frame.origin.x != window.frame.origin.x else { return }
+        window.setFrame(frame, display: true)
+    }
+
 }
 
 enum MenuBarPlacement {
