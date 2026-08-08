@@ -75,7 +75,7 @@ final class AppModel: ObservableObject {
             }
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
                 NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
-                self.notice = "Opened Codex. Agent Fanny Pack cannot read that app's session, so this row will not fill in."
+                self.notice = "Sign in inside Codex, then refresh here."
             } else {
                 self.notice = "The Codex desktop app is not installed."
             }
