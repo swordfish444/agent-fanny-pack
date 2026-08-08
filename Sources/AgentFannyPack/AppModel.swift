@@ -206,6 +206,27 @@ final class AppModel: ObservableObject {
         !Self.discoveredDefaultIDs.contains(profile.id)
     }
 
+    /// Rename uses a native prompt rather than inline editing: it is a rare action, and a
+    /// text field living in every row would clutter the thing the row exists to show.
+    func renameProfile(_ profile: AccountProfile) {
+        let alert = NSAlert()
+        alert.messageText = "Rename \(profile.label)"
+        alert.informativeText = "This label is local to Agent Fanny Pack. The provider account is unchanged."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = profile.label
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let trimmed = String(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !trimmed.isEmpty, trimmed != profile.label else { return }
+        guard let index = state.profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        state.profiles[index].label = trimmed
+        if !isPreview {
+            do { try store.save(state) } catch { notice = Redactor.text(error.localizedDescription) }
+        }
+    }
+
     func requestDelete(_ profile: AccountProfile) {
         pendingDelete = profile
     }
