@@ -197,6 +197,24 @@ let tests: [(String, () throws -> Void)] = [
         try expect(snapshot.displayWindows(showAll: false).map(\.label) == ["7d"], "Compact mode did not prefer the weekly window")
         try expect(snapshot.displayWindows(showAll: true) == windows, "Expanded mode did not preserve every quota window")
     }),
+    ("Removing a profile keeps credentials and reassigns active", {
+        var state = PersistedState(
+            profiles: [
+                AccountProfile(id: "a", surface: .codexCLI, label: "A", configurationHome: "/tmp/a", switchCapability: .isolatedProfile, connected: true),
+                AccountProfile(id: "b", surface: .codexCLI, label: "B", configurationHome: "/tmp/b", switchCapability: .isolatedProfile, connected: true)
+            ],
+            activeProfileBySurface: [ProviderSurface.codexCLI.rawValue: "a"],
+            snapshots: [QuotaSnapshot(profileID: "a", windows: [], fetchedAt: Date(), source: .codexAppServer)]
+        )
+        state.removeProfile(id: "a")
+        try expect(state.profiles.count == 1, "Profile was not removed")
+        try expect(state.snapshots.isEmpty, "Snapshots for the removed profile survived")
+        try expect(state.activeProfileID(for: .codexCLI) == "b", "Active did not fall back to the remaining profile")
+
+        state.removeProfile(id: "b")
+        try expect(state.activeProfileID(for: .codexCLI) == nil, "Active should be cleared when nothing is left")
+        try expect(state.profiles.isEmpty, "Last profile was not removed")
+    }),
     ("Popover stays on screen", {
         let screen = CGRect(x: 0, y: 0, width: 2056, height: 1329)
         // Anchored near the right edge, as a status item at x=1760 would leave it.

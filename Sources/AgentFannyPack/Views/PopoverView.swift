@@ -23,11 +23,12 @@ enum Metrics {
     /// can silently overflow. The extra room from the 25% widening went mostly to the
     /// name column, which was the one actually being squeezed.
     static let colSelector: CGFloat = 34
-    static let colName: CGFloat = 165
+    static let colName: CGFloat = 143
     static let colQuota: CGFloat = 74
     static let colReset: CGFloat = 96
     static let colHealth: CGFloat = 72
     static let colAction: CGFloat = 64
+    static let colDelete: CGFloat = 22
     static let rowTrailing: CGFloat = 10
     static let rowHeight: CGFloat = 48
     static let sectionHeaderHeight: CGFloat = 34
@@ -72,6 +73,14 @@ struct PopoverView: View {
                 }
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.bottom, Metrics.blockGap)
+            }
+            .alert(item: $model.pendingDelete) { profile in
+                Alert(
+                    title: Text("Remove \(profile.label)?"),
+                    message: Text(model.deleteMessage(for: profile)),
+                    primaryButton: .destructive(Text("Remove"), action: model.confirmDelete),
+                    secondaryButton: .cancel()
+                )
             }
             FooterBar(model: model)
         }
@@ -372,7 +381,9 @@ private struct ProviderSection: View {
                     isActive: model.isActive(profile),
                     referenceDate: model.referenceDate,
                     showAllQuotaWindows: model.showAllQuotaWindows,
-                    switchAction: { model.requestSwitch(profile) }
+                    switchAction: { model.requestSwitch(profile) },
+                    canDelete: model.canDelete(profile),
+                    deleteAction: { model.requestDelete(profile) }
                 )
             }
 
@@ -524,6 +535,9 @@ private struct AccountRow: View {
     let referenceDate: Date
     let showAllQuotaWindows: Bool
     let switchAction: () -> Void
+    let canDelete: Bool
+    let deleteAction: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -547,9 +561,11 @@ private struct AccountRow: View {
 
             Spacer(minLength: 0)
             action
+            deleteButton
                 .padding(.trailing, Metrics.rowTrailing)
         }
         .frame(height: Metrics.rowHeight)
+        .onHover { hovering = $0 }
         .background {
             if showsActive {
                 RoundedRectangle(cornerRadius: Metrics.rowRadius, style: .continuous)
@@ -702,6 +718,25 @@ private struct AccountRow: View {
         if profile.switchCapability == .guidedOnly { return "Open guided switch for \(profile.label)" }
         if !profile.connected { return "Connect \(profile.label)" }
         return "Switch launcher to \(profile.label)"
+    }
+
+    /// Kept to a bare glyph in a 22pt gutter, and only inked on hover, so a destructive
+    /// action is reachable without competing with the row's real content.
+    @ViewBuilder private var deleteButton: some View {
+        if canDelete {
+            Button(action: deleteAction) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hovering ? Palette.subtitle : Color.clear)
+                    .frame(width: Metrics.colDelete, height: Metrics.colDelete)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove this entry")
+            .accessibilityLabel("Remove \(profile.label)")
+        } else {
+            Color.clear.frame(width: Metrics.colDelete, height: Metrics.colDelete)
+        }
     }
 
     private func barColor(_ remaining: Double) -> Color {

@@ -6,6 +6,7 @@ import AgentFannyPackCore
 final class AppModel: ObservableObject {
     @Published private(set) var state: PersistedState
     @Published var pendingSwitch: AccountProfile?
+    @Published var pendingDelete: AccountProfile?
     @Published var isRefreshing = false
     @Published var notice: String?
     @Published var showAllQuotaWindows: Bool
@@ -197,6 +198,31 @@ final class AppModel: ObservableObject {
 
     func snapshot(for profile: AccountProfile) -> QuotaSnapshot? {
         state.latestSnapshot(for: profile.id)
+    }
+
+    /// A discovered default is recreated on next launch, so offering to delete one would
+    /// be a button that undoes itself. Only profiles the user added can be removed.
+    func canDelete(_ profile: AccountProfile) -> Bool {
+        !Self.discoveredDefaultIDs.contains(profile.id)
+    }
+
+    func requestDelete(_ profile: AccountProfile) {
+        pendingDelete = profile
+    }
+
+    func confirmDelete() {
+        guard let profile = pendingDelete else { return }
+        defer { pendingDelete = nil }
+        state.removeProfile(id: profile.id)
+        if !isPreview {
+            do { try store.save(state) } catch { notice = Redactor.text(error.localizedDescription); return }
+        }
+        notice = "Removed \(profile.label). Its provider configuration was left untouched."
+    }
+
+    func deleteMessage(for profile: AccountProfile) -> String {
+        let home = profile.configurationHome.map { " Its configuration home \($0) is left on disk." } ?? ""
+        return "This removes the entry from Agent Fanny Pack only. No credentials are deleted and no running session is affected.\(home)"
     }
 
     func requestSwitch(_ profile: AccountProfile) {

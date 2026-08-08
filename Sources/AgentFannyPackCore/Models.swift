@@ -176,6 +176,26 @@ public struct PersistedState: Codable, Equatable, Sendable {
         activeProfileBySurface[profile.surface.rawValue] = profile.id
     }
 
+    /// Forgets a profile and everything derived from it. Only Agent Fanny Pack's own
+    /// bookkeeping is removed: the provider's configuration home and its credentials are
+    /// never touched, so the account can be picked up again by pointing at the same home.
+    /// If the profile was the active one for its surface, the surface falls back to another
+    /// connected profile, or to nothing.
+    public mutating func removeProfile(id: String) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        profiles.removeAll { $0.id == id }
+        snapshots.removeAll { $0.profileID == id }
+        guard activeProfileBySurface[profile.surface.rawValue] == id else { return }
+        let replacement = profiles.first {
+            $0.surface == profile.surface && $0.connected && $0.switchCapability != .unsupported
+        }
+        if let replacement {
+            activeProfileBySurface[profile.surface.rawValue] = replacement.id
+        } else {
+            activeProfileBySurface.removeValue(forKey: profile.surface.rawValue)
+        }
+    }
+
     public func latestSnapshot(for profileID: String) -> QuotaSnapshot? {
         snapshots
             .filter { $0.profileID == profileID }
