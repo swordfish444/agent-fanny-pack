@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LoginItem.registerOnFirstLaunch()
         let model = AppModel(preview: ProcessInfo.processInfo.environment["AGENT_FANNY_PACK_PREVIEW"] == "1")
         controller = StatusBarController(model: model)
         if ProcessInfo.processInfo.environment["AGENT_FANNY_PACK_OPEN"] == "1" {

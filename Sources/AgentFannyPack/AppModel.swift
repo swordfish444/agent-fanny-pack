@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var isRefreshing = false
     @Published var notice: String?
     @Published var showAllQuotaWindows: Bool
+    @Published var opensAtLogin: Bool = LoginItem.isEnabled
 
     let isPreview: Bool
     private let store: MetadataStore
@@ -315,6 +316,14 @@ final class AppModel: ObservableObject {
 
     func requestSwitch(_ profile: AccountProfile) {
         pendingPrompt = .switchProfile(profile)
+    }
+
+    func setOpensAtLogin(_ value: Bool) {
+        guard !isPreview else { return }
+        if !LoginItem.setEnabled(value) {
+            notice = "macOS refused the login item for this copy of the app. Move it to /Applications and try again."
+        }
+        opensAtLogin = LoginItem.isEnabled
     }
 
     func setShowAllQuotaWindows(_ value: Bool) {

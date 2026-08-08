@@ -56,6 +56,10 @@ sips -z 512 512 "$STAGE_DIR/icon-1024.png" --out "$ICONSET/icon_512x512.png" >/d
 cp "$STAGE_DIR/icon-1024.png" "$ICONSET/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+# Strip extended attributes first. macOS tags copied files with com.apple.provenance,
+# which codesign rejects as "resource fork, Finder information, or similar detritus",
+# leaving an unsigned bundle that the login service will later refuse to launch.
+xattr -cr "$APP_DIR"
 codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 file "$APP_DIR/Contents/MacOS/AgentFannyPack" | grep -q 'universal binary'

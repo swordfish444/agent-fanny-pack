@@ -157,6 +157,10 @@ private struct HeaderBar: View {
                     "Show 5-hour and other quota windows",
                     isOn: Binding(get: { model.showAllQuotaWindows }, set: model.setShowAllQuotaWindows)
                 )
+                Toggle(
+                    "Open at login",
+                    isOn: Binding(get: { model.opensAtLogin }, set: model.setOpensAtLogin)
+                )
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 20, weight: .regular))
