@@ -7,25 +7,70 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private(set) var popover: NSPopover
     private let model: AppModel
 
+    /// Stable key so the position the user drags the item to survives relaunches, and so
+    /// `MenuBarPlacement` has a preference to write when it has to rescue the item.
+    static let autosaveName = "AgentFannyPack"
+
     init(model: AppModel) {
         self.model = model
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        self.statusItem = Self.makeStatusItem()
         self.popover = NSPopover()
         super.init()
 
-        if let button = statusItem.button {
-            button.image = StatusBarIcon.make()
-            button.toolTip = "Agent Fanny Pack"
-            button.target = self
-            button.action = #selector(togglePopover)
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
+        configureButton()
 
         popover.behavior = .transient
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         popover.contentSize = NSSize(width: 440, height: 690)
         popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
         popover.delegate = self
+
+        // AppKit has not laid the item out yet; measure on the next pass.
+        DispatchQueue.main.async { [weak self] in
+            self?.rescueFromNotchIfNeeded(attempt: 0)
+        }
+    }
+
+    private static func makeStatusItem() -> NSStatusItem {
+        // `squareLength` reserves a full menu-bar-height square (38pt) for a 19pt glyph.
+        // Those wasted points matter on a crowded bar, so ask only for what the art needs.
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.autosaveName = autosaveName
+        return item
+    }
+
+    private func configureButton() {
+        guard let button = statusItem.button else { return }
+        button.image = StatusBarIcon.make()
+        button.toolTip = "Agent Fanny Pack"
+        button.target = self
+        button.action = #selector(togglePopover)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    /// The macOS menu bar has no overflow UI. When it is full, the system parks the newest
+    /// status item under the notch of a built-in display: `isVisible` stays `true`, the frame
+    /// is on screen, and nothing is ever composited — the app reads as installed and broken.
+    /// Detect that and reseat the item in the region to the right of the camera housing.
+    private func rescueFromNotchIfNeeded(attempt: Int) {
+        guard attempt < MenuBarPlacement.maxAttempts else { return }
+        guard let window = statusItem.button?.window,
+              let screen = window.screen ?? NSScreen.main,
+              MenuBarPlacement.isOccludedByNotch(frame: window.frame, on: screen) else { return }
+
+        MenuBarPlacement.storePreferredPosition(
+            MenuBarPlacement.preferredPosition(forAttempt: attempt),
+            autosaveName: Self.autosaveName
+        )
+
+        // A stored preferred position is only consulted when the item is created, so rebuild it.
+        NSStatusBar.system.removeStatusItem(statusItem)
+        statusItem = Self.makeStatusItem()
+        configureButton()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + MenuBarPlacement.settleDelay) { [weak self] in
+            self?.rescueFromNotchIfNeeded(attempt: attempt + 1)
+        }
     }
 
     @objc func togglePopover() {
@@ -36,6 +81,40 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+}
+
+enum MenuBarPlacement {
+    static let maxAttempts = 5
+    static let settleDelay: TimeInterval = 0.4
+
+    /// Each retry asks for a slot further from the right edge, stepping past whatever
+    /// neighbours already hold the near-notch positions.
+    static func preferredPosition(forAttempt attempt: Int) -> Int {
+        180 + attempt * 160
+    }
+
+    static func storePreferredPosition(_ position: Int, autosaveName: String) {
+        UserDefaults.standard.set(position, forKey: "NSStatusItem Preferred Position \(autosaveName)")
+    }
+
+    /// The notch is the gap between the two auxiliary top areas. Displays without one report
+    /// no gap, so this returns `false` and the item is left exactly where the system put it.
+    ///
+    /// Only an item that actually overlaps the housing counts as occluded. The area to the
+    /// left of the notch is perfectly visible, so an item the user dragged there is left alone.
+    static func isOccludedByNotch(frame: NSRect, on screen: NSScreen) -> Bool {
+        guard #available(macOS 12.0, *),
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea,
+              right.minX > left.maxX else { return false }
+        let notch = NSRect(
+            x: left.maxX,
+            y: right.minY,
+            width: right.minX - left.maxX,
+            height: right.height
+        )
+        return frame.intersects(notch)
     }
 }
 

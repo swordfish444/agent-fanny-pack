@@ -117,6 +117,8 @@ Normal operation is event-light: one `NSStatusItem`, a SwiftUI popover created o
 
 **The app does not appear in the Dock.** Correct: it is a menu-bar utility (`LSUIElement`) by design. Look for the small pouch glyph in the menu bar.
 
+**The app is running but no pouch glyph is anywhere in the menu bar.** The menu bar is full. macOS has no overflow UI: once the area right of the notch is packed, it parks the newest status item under the camera housing, where `NSStatusItem.isVisible` still reports `true` and the frame is still on screen, but the system never composites it. Quit or hide one or two other menu-bar items and the pouch appears. Agent Fanny Pack asks for only the width its glyph needs and, on a notched display, moves itself clear of the housing if it detects it landed there — but it cannot conjure space that does not exist. `agent-fanny-pack doctor` confirms the app itself is healthy; this is a placement problem, not a launch failure.
+
 **Codex says “No snapshot.”** Confirm the profile is signed in with its isolated `CODEX_HOME`, then press <kbd>⌘R</kbd> in the pouch. API-key-only or non-ChatGPT auth may not provide ChatGPT quota buckets.
 
 **Claude is connected but has no quota.** Add the status-line bridge, start Claude Code with that profile, and complete one provider response. Anthropic documents that `rate_limits` can be absent before the first response or for unsupported account types.

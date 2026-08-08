@@ -2,6 +2,11 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// `NSApplication.delegate` is a weak reference, so the local binding in `main()` is the
+    /// only owner. Holding the delegate for the process lifetime keeps `controller` — and with
+    /// it the `NSStatusItem` — from being released out from under the menu bar.
+    static var shared: AppDelegate?
+
     private var controller: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -23,6 +28,7 @@ struct AgentFannyPackMain {
 
         let application = NSApplication.shared
         let delegate = AppDelegate()
+        AppDelegate.shared = delegate
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
         application.run()
