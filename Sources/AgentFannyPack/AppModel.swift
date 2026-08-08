@@ -38,8 +38,62 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Auto-discovered placeholders that exist only so a surface has something to point at.
+    /// They carry no account, so showing one signed-out is just noise where an Add belongs.
+    private static let discoveredDefaultIDs: Set<String> = [
+        "codex-default", "claude-default", "codex-macos-guided", "cursor-deferred"
+    ]
+
     func profiles(for surface: ProviderSurface, filter: AccountFilter) -> [AccountProfile] {
-        state.profiles.filter { $0.surface == surface && matches($0, filter: filter) }
+        state.profiles.filter { profile in
+            guard profile.surface == surface, matches(profile, filter: filter) else { return false }
+            // A profile the user created stays visible when signed out so it can be
+            // reconnected; an untouched discovered default does not.
+            if !profile.connected && Self.discoveredDefaultIDs.contains(profile.id) { return false }
+            return true
+        }
+    }
+
+    /// Only the isolated-profile surfaces can take a new account: the Codex macOS app owns
+    /// its own session, and Cursor has no supported multi-profile contract.
+    func canAddProfile(to surface: ProviderSurface) -> Bool {
+        surface == .codexCLI || surface == .claudeCode
+    }
+
+    /// Creates an isolated profile and hands straight off to the provider's own login.
+    /// Agent Fanny Pack never sees a credential; it only owns the directory pointer.
+    func addProfile(to surface: ProviderSurface) {
+        guard canAddProfile(to: surface) else { return }
+        guard !isPreview else {
+            notice = "Synthetic preview: no account is added."
+            return
+        }
+        let existing = state.profiles.filter { $0.surface == surface }.count
+        let slug = surface == .codexCLI ? "codex" : "claude"
+        var index = existing + 1
+        var id = "\(slug)-profile-\(index)"
+        while state.profiles.contains(where: { $0.id == id }) {
+            index += 1
+            id = "\(slug)-profile-\(index)"
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".\(slug)-afp-\(index)")
+            .path
+        let profile = AccountProfile(
+            id: id,
+            surface: surface,
+            label: "\(surface.displayName) \(index)",
+            configurationHome: home,
+            switchCapability: .isolatedProfile
+        )
+        do {
+            state.profiles.append(profile)
+            if state.activeProfileID(for: surface) == nil { try state.setActive(profileID: id) }
+            try store.save(state)
+            beginConnection(for: profile)
+        } catch {
+            notice = Redactor.text(error.localizedDescription)
+        }
     }
 
     func matches(_ profile: AccountProfile, filter: AccountFilter) -> Bool {

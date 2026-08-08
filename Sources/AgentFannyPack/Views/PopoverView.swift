@@ -12,22 +12,23 @@ public enum AccountFilter: String, CaseIterable, Identifiable {
 /// Every tunable in the approved design lives here so visual QA can be closed
 /// by adjusting numbers rather than restructuring the view tree.
 enum Metrics {
-    static let width: CGFloat = 431
+    static let width: CGFloat = 539
     static let height: CGFloat = 647.5
     static let gutter: CGFloat = 12
     static let cardRadius: CGFloat = 11
     static let rowRadius: CGFloat = 9
     static let sectionSpacing: CGFloat = 8
 
-    /// Row columns, measured off the approved design and summing exactly to the
-    /// panel's inner width (431 - 2*12 = 407) so nothing can silently overflow.
-    static let colSelector: CGFloat = 30
-    static let colName: CGFloat = 112
-    static let colQuota: CGFloat = 62
-    static let colReset: CGFloat = 86
-    static let colHealth: CGFloat = 58
-    static let colAction: CGFloat = 54
-    static let rowTrailing: CGFloat = 9
+    /// Row columns sum exactly to the panel's inner width (539 - 2*12 = 515) so nothing
+    /// can silently overflow. The extra room from the 25% widening went mostly to the
+    /// name column, which was the one actually being squeezed.
+    static let colSelector: CGFloat = 34
+    static let colName: CGFloat = 165
+    static let colQuota: CGFloat = 74
+    static let colReset: CGFloat = 96
+    static let colHealth: CGFloat = 72
+    static let colAction: CGFloat = 64
+    static let rowTrailing: CGFloat = 10
     static let rowHeight: CGFloat = 48
     static let sectionHeaderHeight: CGFloat = 34
 
@@ -370,6 +371,14 @@ private struct ProviderSection: View {
                     switchAction: { model.requestSwitch(profile) }
                 )
             }
+
+            if model.canAddProfile(to: surface) {
+                Divider().overlay(Palette.hairline)
+                AddAccountRow(surface: surface) { model.addProfile(to: surface) }
+            } else if profiles.isEmpty {
+                Divider().overlay(Palette.hairline)
+                EmptySurfaceRow(surface: surface)
+            }
         }
         .background(Palette.panel, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .overlay {
@@ -391,6 +400,57 @@ private struct ProviderSection: View {
         case .codexMacApp: return Palette.warn
         default: return connectedCount > 0 ? Palette.good : Palette.muted
         }
+    }
+}
+
+/// Always present on an addable surface, so a signed-out provider offers the next step
+/// instead of a placeholder row that does nothing.
+private struct AddAccountRow: View {
+    let surface: ProviderSurface
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Palette.good)
+                    .frame(width: Metrics.colSelector)
+                Text("Add \(surface.displayName) account")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Palette.good)
+                Spacer(minLength: 0)
+                Text("Opens provider sign-in")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.subtitle)
+                    .padding(.trailing, Metrics.rowTrailing)
+            }
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add \(surface.displayName) account")
+    }
+}
+
+/// A surface that cannot take a new account still has to explain itself.
+private struct EmptySurfaceRow: View {
+    let surface: ProviderSurface
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: surface == .cursor ? "clock.badge.questionmark" : "person.crop.circle.badge.questionmark")
+                .font(.system(size: 14))
+                .foregroundStyle(Palette.subtitle)
+                .frame(width: Metrics.colSelector)
+            Text(surface == .cursor
+                 ? "Deferred until Cursor documents safe profile switching"
+                 : "Sign in through the Codex app, then refresh")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.subtitle)
+            Spacer(minLength: 0)
+        }
+        .frame(height: 38)
     }
 }
 
@@ -511,9 +571,9 @@ private struct AccountRow: View {
                     Capsule().fill(Palette.track).frame(height: 5)
                     Capsule()
                         .fill(barColor(window.remainingPercent))
-                        .frame(width: max(4, 58 * window.remainingPercent / 100), height: 5)
+                        .frame(width: max(4, 68 * window.remainingPercent / 100), height: 5)
                 }
-                .frame(width: 58)
+                .frame(width: 68)
             }
         } else {
             VStack(alignment: .leading, spacing: 3) {
