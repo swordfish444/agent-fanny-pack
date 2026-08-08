@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum Switching {
     public static func command(for profile: AccountProfile, passthrough: [String] = []) throws -> CommandSpec {
@@ -64,7 +65,8 @@ public struct ProfileDiscovery {
                 surface: .codexCLI,
                 label: "Default Codex",
                 configurationHome: codexHome.path,
-                switchCapability: .isolatedProfile
+                switchCapability: .isolatedProfile,
+                connected: isSignedIn(surface: .codexCLI, home: codexHome)
             ))
         }
         let claudeHome = homeDirectory.appendingPathComponent(".claude", isDirectory: true)
@@ -74,9 +76,46 @@ public struct ProfileDiscovery {
                 surface: .claudeCode,
                 label: "Default Claude",
                 configurationHome: claudeHome.path,
-                switchCapability: .isolatedProfile
+                switchCapability: .isolatedProfile,
+                connected: isSignedIn(surface: .claudeCode, home: claudeHome)
             ))
         }
         return profiles
+    }
+
+    /// Whether a configuration home already holds a session, decided without launching a
+    /// provider process and without reading a single secret. A home that exists is not the
+    /// same as a home that is signed in, and treating it as such made a signed-in account
+    /// look disconnected.
+    public func isSignedIn(surface: ProviderSurface, home: URL) -> Bool {
+        switch surface {
+        case .codexCLI:
+            // OpenAI documents auth.json as the credential file inside CODEX_HOME.
+            return fileManager.fileExists(atPath: home.appendingPathComponent("auth.json").path)
+        case .claudeCode:
+            // Claude Code stores credentials in the login keychain, with a file fallback
+            // inside the config directory for non-keychain setups.
+            if fileManager.fileExists(atPath: home.appendingPathComponent(".credentials.json").path) {
+                return true
+            }
+            return Self.keychainHoldsClaudeCredentials()
+        case .codexMacApp, .cursor:
+            // App-owned or unsupported: there is no readable local signal, and guessing
+            // one would be a claim this app cannot stand behind.
+            return false
+        }
+    }
+
+    /// Probes for the presence of the item only. `kSecReturnAttributes` keeps the secret out
+    /// of the process entirely, which also means macOS does not prompt for access.
+    static func keychainHoldsClaudeCredentials() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Claude Code-credentials",
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: false,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 }

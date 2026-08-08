@@ -467,14 +467,15 @@ private struct EmptySurfaceRow: View {
                 .foregroundStyle(surface == .cursor ? Palette.subtitle : Palette.good)
                 .frame(width: Metrics.colSelector)
             Text(message)
-                .font(.system(size: 13))
+                .font(.system(size: 12.5))
                 .foregroundStyle(Palette.subtitle)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             if let action {
                 Button(action: action) {
-                    Text("Sign in")
-                        .font(.system(size: 14, weight: .medium))
+                    Text("Open Codex")
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Palette.title)
                         .frame(width: Metrics.buttonWidth, height: Metrics.buttonHeight)
                         .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -495,7 +496,9 @@ private struct EmptySurfaceRow: View {
         case .cursor:
             return "Deferred until Cursor documents safe profile switching"
         case .codexMacApp:
-            return "The Codex app owns its own session"
+            // Say plainly that opening the app will not populate this row, rather than
+            // implying a sign-in here hands the account over.
+            return "Signed in or not, this app's session stays private to it. Use a Codex CLI account above to switch."
         default:
             return "No accounts yet"
         }

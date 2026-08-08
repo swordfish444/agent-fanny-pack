@@ -197,6 +197,25 @@ let tests: [(String, () throws -> Void)] = [
         try expect(snapshot.displayWindows(showAll: false).map(\.label) == ["7d"], "Compact mode did not prefer the weekly window")
         try expect(snapshot.displayWindows(showAll: true) == windows, "Expanded mode did not preserve every quota window")
     }),
+    ("Discovery reports signed-in only when a credential exists", {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("afp-signin-\(UUID().uuidString)")
+        let codex = root.appendingPathComponent(".codex")
+        try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
+        let discovery = ProfileDiscovery(homeDirectory: root)
+
+        // A home that merely exists is not a signed-in account.
+        try expect(discovery.isSignedIn(surface: .codexCLI, home: codex) == false, "An empty Codex home reported signed in")
+        try expect(discovery.defaults().first(where: { $0.id == "codex-default" })?.connected == false, "Empty Codex home was marked connected")
+
+        try Data("{}".utf8).write(to: codex.appendingPathComponent("auth.json"))
+        try expect(discovery.isSignedIn(surface: .codexCLI, home: codex), "auth.json was not treated as a session")
+        try expect(discovery.defaults().first(where: { $0.id == "codex-default" })?.connected == true, "Signed-in Codex home was not marked connected")
+
+        // App-owned and unsupported surfaces never claim a session.
+        try expect(discovery.isSignedIn(surface: .codexMacApp, home: codex) == false, "Codex macOS claimed a readable session")
+        try expect(discovery.isSignedIn(surface: .cursor, home: codex) == false, "Cursor claimed a readable session")
+        try? FileManager.default.removeItem(at: root)
+    }),
     ("Removing a profile keeps credentials and reassigns active", {
         var state = PersistedState(
             profiles: [
